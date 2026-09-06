@@ -1,6 +1,13 @@
+export type Protocol =
+  | "FHIR_R4"
+  | "HL7_V2";
+
+
 export interface LabTestRequest {
 
   requestId: string;
+
+  protocol?: Protocol;
 
   patient: {
 

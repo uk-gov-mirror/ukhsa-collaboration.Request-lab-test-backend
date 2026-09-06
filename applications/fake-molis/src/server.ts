@@ -21,6 +21,14 @@ import type {
   MolisOrder
 } from "./types.js";
 
+import {
+  hl7ToMolisOrder
+} from "./hl7v2.js";
+
+import {
+  resultToHL7V2
+} from "./result-to-hl7v2.js";
+
 
 const app =
   Fastify({
@@ -344,6 +352,142 @@ app.post<{
 
         order
       });
+  }
+);
+
+
+// ==================================================
+// CREATE ORDER FROM HL7 v2
+// ==================================================
+
+app.post<{
+  Body: string | { message?: string };
+}>(
+  "/molis/orders/hl7v2",
+  async (
+    request,
+    reply
+  ) => {
+    try {
+      const body = request.body;
+      const message =
+        typeof body === "string"
+          ? body
+          : body?.message;
+
+      if (!message) {
+        return reply
+          .code(400)
+          .send({
+            status: "INVALID_HL7V2",
+            message: "HL7 v2 message is required"
+          });
+      }
+
+      const input = hl7ToMolisOrder(message);
+      const accessionNumber = generateAccessionNumber();
+
+      const order: MolisOrder = {
+        accessionNumber,
+        requestId: input.requestId,
+        status: "RECEIVED",
+        receivedAt: new Date().toISOString(),
+        patient: input.patient,
+        requester: input.requester,
+        laboratory: input.laboratory,
+        test: input.test,
+        specimen: input.specimen
+      };
+
+      saveOrder(order);
+
+      return reply
+        .code(201)
+        .send({
+          status: "ORDER_RECEIVED",
+          protocol: "HL7_V2",
+          accessionNumber,
+          order
+        });
+    } catch (error: any) {
+      request.log.error(error);
+
+      return reply
+        .code(422)
+        .send({
+          status: "HL7V2_ORDER_ERROR",
+          message:
+            error?.message ||
+            "Unable to process HL7 v2 order"
+        });
+    }
+  }
+);
+
+app.get<{
+  Params: {
+    accessionNumber: string;
+  };
+}>(
+  "/molis/orders/:accessionNumber/hl7v2",
+  async (
+    request,
+    reply
+  ) => {
+
+    try {
+    const accessionNumber = request.params.accessionNumber;
+    const order =
+      getOrder(accessionNumber);
+
+    if (!order) {
+
+      return reply
+        .code(404)
+        .send({
+          status: "ORDER_NOT_FOUND",
+          accessionNumber
+        });
+
+    }
+
+    if (
+      order.status !==
+      "RESULT_AVAILABLE"
+    ) {
+
+      return reply
+        .code(409)
+        .send({
+          status: "RESULT_NOT_AVAILABLE",
+          accessionNumber,
+          orderStatus: order.status
+        });
+
+    }
+
+    const message =
+      resultToHL7V2(order);
+
+    return reply
+      .type("text/plain")
+      .code(200)
+      .send(message);
+
+    } catch (error: any) {
+
+      request.log.error(error);
+
+      return reply
+        .code(422)
+        .send({
+          status: "HL7V2_RESULT_ERROR",
+          message:
+            error?.message ||
+            "Unable to generate HL7 v2 result"
+        });
+
+    }
   }
 );
 

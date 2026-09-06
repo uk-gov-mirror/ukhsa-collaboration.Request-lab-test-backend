@@ -1,0 +1,90 @@
+{
+  "resourceType": "Bundle",
+  "type": "message",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "MessageHeader",
+        "id": "RLT-10001",
+        "timestamp": "2026-08-20T07:00:00Z"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-1",
+        "identifier": [
+          {
+            "system": "https://fhir.nhs.uk/Id/nhs-number",
+            "value": "9999999999"
+          }
+        ],
+        "name": [
+          {
+            "family": "Smith",
+            "given": ["John"]
+          }
+        ],
+        "birthDate": "1975-03-12",
+        "gender": "male"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "ServiceRequest",
+        "id": "RLT-10001",
+        "identifier": [
+          {
+            "value": "RLT-10001"
+          }
+        ],
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "43396009",
+              "display": "Haemoglobin A1c measurement"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Specimen",
+        "id": "specimen-1",
+        "type": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "122555007",
+              "display": "Venous blood specimen"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "id": "observation-1",
+        "status": "final",
+        "code": {
+          "coding": [
+            {
+              "system": "http://snomed.info/sct",
+              "code": "43396009",
+              "display": "Haemoglobin A1c measurement"
+            }
+          ]
+        },
+        "valueQuantity": {
+          "value": 48,
+          "unit": "mmol/mol",
+          "system": "http://unitsofmeasure.org",
+          "code": "mmol/mol"
+        }
+      }
+    }
+  ]
+}

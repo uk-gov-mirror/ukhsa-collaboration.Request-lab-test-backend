@@ -151,21 +151,118 @@ app.post<{
     // Canonical → FHIR Adapter
     // ==========================================
 
+        const protocol =
+          request.body.protocol ??
+          "FHIR_R4";
+
+        if (
+          protocol !== "FHIR_R4" &&
+          protocol !== "HL7_V2"
+        ) {
+          throw new Error(
+            `Unsupported protocol: ${protocol}`
+          );
+        }
+
+        if (protocol === "HL7_V2") {
+
+      // ==========================================
+      // STEP 2B-HL7
+      // Canonical → HL7 v2 Adapter
+      // ==========================================
+
+      const hl7Response =
+        await orchestrator
+          .buildHl7V2Request(
+            canonicalRequest,
+            terminology
+          );
+
+      updateRequestStatus(
+        requestId,
+        "HL7V2_REQUEST_CREATED",
+        35,
+        "HL7 v2 pathology request created"
+      );
+
+      // ==========================================
+      // STEP 2C-HL7
+      // HL7 v2 → MOLIS
+      // ==========================================
+      const molisResponse =
+        await orchestrator
+          .sendHl7V2ToMolis(
+            hl7Response.message
+          );
+
+      updateRequestStatus(
+        requestId,
+        "SENT_TO_MOLIS",
+        50,
+        "HL7 v2 pathology request sent to MOLIS"
+      );
+
+      // ==========================================
+      // STEP 3A-HL7
+      // MOLIS order processing
+      // ==========================================
+
+      const accessionNumber =
+        molisResponse.accessionNumber;
+
+      const molisProcessResponse =
+        await orchestrator
+          .processMolisOrder(
+            accessionNumber
+          );
+
+
+      updateRequestStatus(
+        requestId,
+        "ORDER_RECEIVED",
+        60,
+        "MOLIS order received"
+      );
+
+      // ==========================================
+      // STEP 4E RESPONSE
+      // Stop here for Step 4E
+      // ==========================================
+      return reply
+        .code(200)
+        .send({
+          status:
+            "ORDER_RECEIVED",
+          protocol,
+          requestId,
+          accessionNumber,
+          canonicalRequest,
+          hl7Request:
+            hl7Response.message,
+          molis:
+            molisResponse,
+          molisProcess:
+            molisProcessResponse
+        });
+    }
+
+    // ==========================================
+    // STEP 2B-FHIR
+    // Canonical → FHIR Adapter
+    // ==========================================
+
     const fhirResponse =
-    await orchestrator
+      await orchestrator
         .buildFhirRequest(
-
-        canonicalRequest,
-
-        fhirTerminology
-
+          canonicalRequest,
+          fhirTerminology
         );
     
     updateRequestStatus(
-        requestId,
-        "FHIR_REQUEST_CREATED",
-        35,
-        "FHIR pathology request created"
+      requestId,
+      "FHIR_REQUEST_CREATED",
+      35,
+      "FHIR pathology request created"
     );
 
     updateRequestStatus(

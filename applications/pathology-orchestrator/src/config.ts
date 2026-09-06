@@ -14,6 +14,10 @@ export const config = {
     process.env.FHIR_ADAPTER_URL ??
     "http://localhost:4002",
 
+  hl7v2AdapterUrl:
+    process.env.HL7V2_ADAPTER_URL ??
+    "http://localhost:4006",
+
   molisUrl:
     process.env.MOLIS_URL ??
     "http://localhost:4010",

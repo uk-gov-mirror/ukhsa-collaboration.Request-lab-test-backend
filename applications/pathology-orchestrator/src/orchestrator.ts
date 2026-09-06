@@ -4,7 +4,8 @@ import {
 
 import {
   getJson,
-  postJson
+  postJson,
+  postText
 } from "./http.js";
 
 import type {
@@ -543,4 +544,125 @@ async processMolisOrder(
     };
     }
 
+
+  async buildHl7V2Request(
+    canonicalRequest: any,
+    terminology: any
+  ) {
+    console.log(
+      "[2B-HL7] Sending request to HL7 v2 Adapter..."
+    );
+
+    const palmRequestable =
+      terminology?.test?.request?.palmProcedure;
+
+    if (!palmRequestable?.code) {
+      throw new Error(
+        "PaLM procedure terminology code is required for HL7 v2 request"
+      );
+    }
+
+    const hl7Request = {
+      ...canonicalRequest,
+
+      test: {
+        code: palmRequestable.code,
+        display:
+          palmRequestable.display ??
+          canonicalRequest.test.display,
+        system:
+          palmRequestable.system
+      },
+
+      specimen: {
+        ...canonicalRequest.specimen,
+
+        // The HL7 adapter supports specimen.code.
+        // Preserve the local specimen information if no
+        // standard code has been resolved yet.
+        code:
+          canonicalRequest.specimen.code,
+        system:
+          canonicalRequest.specimen.system
+      }
+    };
+
+    const response =
+      await postJson<any>(
+        `${config.hl7v2AdapterUrl}/hl7v2/from-canonical`,
+        {
+          request: hl7Request
+        }
+      );
+
+    if (response.status !== "SUCCESS") {
+      throw new Error(
+        `HL7 v2 Adapter returned unexpected status: ` +
+        `${response.status}`
+      );
+    }
+
+    console.log(
+      "[2B-HL7] HL7 v2 request created"
+    );
+
+    return response;
+  }
+
+// ================================================
+// STEP 2C
+// HL7 v2 → Fake MOLIS
+// ================================================
+  async sendHl7V2ToMolis(
+    hl7Message: string
+  ) {
+
+    console.log(
+      "[2C-HL7] Sending HL7 v2 request to MOLIS..."
+    );
+
+    if (!hl7Message) {
+
+      throw new Error(
+        "HL7 v2 message is missing"
+      );
+
+    }
+
+    const response =
+      await postText<any>(
+        `${config.molisUrl}` +
+        `/molis/orders/hl7v2`,
+        hl7Message
+      );
+
+    if (
+      response.status !==
+      "ORDER_RECEIVED"
+    ) {
+
+      throw new Error(
+        `MOLIS returned unexpected HL7 v2 status: ` +
+        `${response.status}`
+      );
+
+    }
+
+    if (
+      !response.accessionNumber
+    ) {
+
+      throw new Error(
+        "MOLIS did not return an accession number"
+      );
+
+    }
+
+    console.log(
+      `[2C-HL7] MOLIS order received: ` +
+      `${response.accessionNumber}`
+    );
+
+    return response;
+  }
 }
