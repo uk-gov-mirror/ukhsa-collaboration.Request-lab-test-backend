@@ -120,6 +120,13 @@ app.post<{
           .resolveTerminology(
             request.body.test.localCode
           );
+      
+      updateRequestStatus(
+        requestId,
+        "TERMINOLOGY_RESOLVED",
+        15,
+        "Pathology terminology resolved"
+      );
 
 
       // ==========================================
@@ -225,24 +232,86 @@ app.post<{
       );
 
       // ==========================================
-      // STEP 4E RESPONSE
-      // Stop here for Step 4E
+      // STEP 4F-HL7
+      // Get HL7 v2 result from MOLIS
       // ==========================================
+
+      updateRequestStatus(
+        requestId,
+        "RESULT_AVAILABLE",
+        75,
+        "HL7 v2 pathology result received from MOLIS"
+      );
+
+      const hl7Result =
+        await orchestrator
+          .getHl7V2ResultFromMolis(
+            accessionNumber
+          );
+
+      updateRequestStatus(
+        requestId,
+        "HL7V2_RESULT_RECEIVED",
+        75,
+        "HL7 v2 ORU^R01 result received from MOLIS"
+      );
+
+
+      // ==========================================
+      // STEP 4F-HL7
+      // HL7 v2 Result → Canonical Result
+      // ==========================================
+
+      const canonicalResult =
+        await orchestrator
+          .convertHl7V2ResultToCanonical(
+            hl7Result
+          );
+
+      updateRequestStatus(
+        requestId,
+        "RESULT_MAPPED",
+        90,
+        "HL7 v2 result mapped to canonical result"
+      );
+
+      const fhirDocumentResponse =
+        await orchestrator
+          .buildFhirDocumentFromCanonicalResult(
+            canonicalRequest,
+            canonicalResult,
+            accessionNumber
+          );
+
+      updateRequestStatus(
+        requestId,
+        "FHIR_DOCUMENT_CREATED",
+        95,
+        "FHIR pathology document created from canonical result"
+      );
+
+      updateRequestStatus(
+        requestId,
+        "COMPLETED",
+        100,
+        "Laboratory request completed"
+      );
+
       return reply
         .code(200)
         .send({
-          status:
-            "ORDER_RECEIVED",
+          status: "FHIR_DOCUMENT_CREATED",
           protocol,
           requestId,
           accessionNumber,
           canonicalRequest,
-          hl7Request:
-            hl7Response.message,
-          molis:
-            molisResponse,
-          molisProcess:
-            molisProcessResponse
+          hl7Request: hl7Response.message,
+          molis: molisResponse,
+          molisProcess: molisProcessResponse,
+          hl7Result,
+          canonicalResult,
+          fhirDocument:
+            fhirDocumentResponse.document
         });
     }
 
@@ -352,6 +421,13 @@ app.post<{
         canonicalResultResponse.result
         );
     
+    updateRequestStatus(
+      requestId,
+      "FHIR_DOCUMENT_CREATED",
+      95,
+      "FHIR pathology document created"
+    );
+    
     
     // ==========================================
     // STEP 6
@@ -414,12 +490,17 @@ app.post<{
         error
       );
 
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "Unknown error";
+
       updateRequestStatus(
         request.body.requestId,
         "FAILED",
         0,
-        "Laboratory request failed"
-        );
+        errorMessage
+      );
 
 
       return reply

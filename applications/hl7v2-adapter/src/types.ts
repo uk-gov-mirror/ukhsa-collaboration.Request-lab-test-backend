@@ -19,6 +19,12 @@ export interface CanonicalSpecimen {
 }
 
 export interface CanonicalResult {
+  observationId?: string;
+  test?: {
+    code: string;
+    display?: string;
+    system?: string;
+  };
   value?: number | string;
   unit?: string;
   referenceRange?: {
@@ -28,6 +34,7 @@ export interface CanonicalResult {
   };
   interpretation?: string;
   status?: string;
+  issuedAt?: string;
 }
 
 export interface CanonicalLabRequest {

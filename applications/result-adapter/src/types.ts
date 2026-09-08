@@ -56,7 +56,10 @@ export interface CanonicalLabResult {
   status:
     | "FINAL"
     | "PRELIMINARY"
-    | "CANCELLED";
+    | "CANCELLED"
+    | "F"
+    | "C"
+    | "P";
 
   issuedAt: string;
 }

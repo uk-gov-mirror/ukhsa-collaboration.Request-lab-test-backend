@@ -22,6 +22,10 @@ import {
   canonicalToHL7
 } from "./canonical-to-hl7.js";
 
+import {
+  hl7ResultToCanonical
+} from "./hl7-result.js";
+
 const app = Fastify({
   logger: true
 });
@@ -178,6 +182,61 @@ app.post("/hl7v2/from-fhir", async (request, reply) => {
     });
   }
 });
+
+app.post(
+  "/hl7v2/result-to-canonical",
+  async (request, reply) => {
+
+    try {
+
+      const body =
+        request.body as {
+          message?: string;
+        };
+
+      if (!body?.message) {
+
+        return reply
+          .code(400)
+          .send({
+            status: "INVALID_REQUEST",
+            message:
+              "HL7 v2 result message is required"
+          });
+
+      }
+
+      const result =
+        hl7ResultToCanonical(
+          body.message
+        );
+
+      return reply
+        .send({
+          status: "SUCCESS",
+          direction:
+            "HL7V2_TO_CANONICAL_RESULT",
+          result
+        });
+
+    } catch (error: any) {
+
+      request.log.error(error);
+
+      return reply
+        .code(422)
+        .send({
+          status:
+            "HL7V2_RESULT_PARSE_ERROR",
+
+          message:
+            error?.message ||
+            "Unable to parse HL7 v2 result"
+        });
+
+    }
+  }
+);
 
 app.listen({
   port: PORT,

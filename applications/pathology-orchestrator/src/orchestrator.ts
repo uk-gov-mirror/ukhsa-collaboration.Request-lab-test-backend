@@ -665,4 +665,116 @@ async processMolisOrder(
 
     return response;
   }
+
+  async getHl7V2ResultFromMolis(
+    accessionNumber: string
+  ) {
+
+    console.log(
+      `[4F-HL7] Getting HL7 v2 result for ${accessionNumber}...`
+    );
+
+    const response =
+      await getJson<string>(
+        `${config.molisUrl}` +
+        `/molis/orders/${accessionNumber}/hl7v2`
+      );
+
+    if (!response) {
+      throw new Error(
+        `MOLIS returned an empty HL7 v2 result`
+      );
+    }
+
+    console.log(
+      `[4F-HL7] HL7 v2 result received`
+    );
+
+    return response;
+  }
+
+  async convertHl7V2ResultToCanonical(
+    message: string
+  ) {
+
+    console.log(
+      "[4F-HL7] Converting HL7 v2 result to canonical result..."
+    );
+
+    const response =
+      await postJson<any>(
+        `${config.hl7v2AdapterUrl}` +
+        `/hl7v2/result-to-canonical`,
+        {
+          message
+        }
+      );
+
+    if (
+      response.status !==
+      "SUCCESS"
+    ) {
+      throw new Error(
+        `HL7 v2 Adapter returned unexpected result status: ` +
+        `${response.status}`
+      );
+    }
+
+    console.log(
+      "[4F-HL7] Canonical result created"
+    );
+
+    return response.result;
+  }
+
+  async buildFhirDocumentFromCanonicalResult(
+    canonicalRequest: any,
+    canonicalResult: any,
+    accessionNumber: string
+  ) {
+    const documentInput = {
+      ...canonicalRequest,
+
+      accessionNumber,
+
+      test: {
+        ...canonicalRequest.test,
+
+        // Result observable from HL7 OBX-3
+        palmObservable: canonicalResult.test
+      },
+
+      result: {
+        value: canonicalResult.value,
+        unit: canonicalResult.unit,
+        referenceRange: canonicalResult.referenceRange,
+        interpretation: canonicalResult.interpretation,
+        status: canonicalResult.status,
+        issuedAt: canonicalResult.issuedAt
+      },
+
+      resultId: canonicalResult.observationId
+    };
+
+    const response = await postJson<any>(
+      `${config.resultAdapterUrl}/results/to-document`,
+      documentInput
+    );
+
+    if (response.status !== "DOCUMENT_CREATED") {
+      throw new Error(
+        response.message ||
+        "Unable to build FHIR pathology document"
+      );
+    }
+
+    if (!response.document) {
+      throw new Error(
+        "Result adapter did not return a FHIR document"
+      );
+    }
+
+    return response;
+  }
+
 }

@@ -1272,3 +1272,54 @@ form {
   }
 
 }
+
+.progress-protocol {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  margin: 20px 0 14px;
+  padding: 12px 16px;
+
+  border: 1px solid #d8dde3;
+  border-radius: 6px;
+
+  background: #f8f8f8;
+}
+
+.progress-protocol span {
+  font-size: 14px;
+  color: #4c6272;
+}
+
+.progress-protocol strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+
+.step-content {
+  flex: 1;
+}
+
+
+.step-label {
+  font-weight: 600;
+}
+
+
+.step-description {
+  margin-top: 3px;
+
+  font-size: 13px;
+
+  line-height: 1.4;
+
+  color: #4c6272;
+}
+
+
+.progress-step.current
+.step-description {
+  font-weight: 500;
+}

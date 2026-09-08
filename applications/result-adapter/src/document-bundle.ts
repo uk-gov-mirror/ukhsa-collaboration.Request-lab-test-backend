@@ -22,30 +22,33 @@ const LOINC_SYSTEM =
 // Main document builder
 // --------------------------------------------------
 
+function isValidUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value
+  );
+}
+
 export function buildPathologyDocument(
   result: CanonicalLabResult
 ) {
 
-  const patientId =
-    `patient-${result.patient.nhsNumber}`;
+  const patientId = randomUUID();
 
-  const organizationId =
-    `organization-${
-      result.laboratory.organisationCode
-      ?? "LAB001"
-    }`;
+  const organizationId = randomUUID();
 
-  const specimenId =
-    `specimen-${result.accessionNumber}`;
+  const specimenId = randomUUID();
 
   const observationId =
-    result.resultId;
+    result.resultId &&
+    isValidUuid(result.resultId)
+      ? result.resultId
+      : randomUUID();
 
-  const diagnosticReportId =
-    `report-${result.accessionNumber}`;
+  const diagnosticReportId = randomUUID();
 
-  const compositionId =
-    `composition-${result.accessionNumber}`;
+  const compositionId = randomUUID();
+
+  const bundleId = randomUUID();
 
 
   // ==================================================
@@ -494,7 +497,17 @@ export function buildPathologyDocument(
       "Bundle",
 
     id:
-      randomUUID(),
+      bundleId,
+
+    identifier: {
+
+      system:
+        "https://rlt.nhs.uk/fhir/document",
+
+      value:
+        `${result.accessionNumber}-${bundleId}`
+
+    },
 
     type:
       "document",
@@ -564,35 +577,38 @@ export function buildPathologyDocument(
 // Helpers
 // ==================================================
 
-function mapObservationStatus(
-  status: CanonicalLabResult["status"]
-) {
-
+function mapObservationStatus(status: CanonicalLabResult["status"]) {
   switch (status) {
-
     case "FINAL":
+    case "F":
       return "final";
 
     case "CANCELLED":
+    case "C":
       return "cancelled";
+
+    case "PRELIMINARY":
+    case "P":
+      return "preliminary";
 
     default:
       return "preliminary";
   }
 }
 
-
-function mapDiagnosticReportStatus(
-  status: CanonicalLabResult["status"]
-) {
-
+function mapDiagnosticReportStatus(status: CanonicalLabResult["status"]) {
   switch (status) {
-
     case "FINAL":
+    case "F":
       return "final";
 
     case "CANCELLED":
+    case "C":
       return "cancelled";
+
+    case "PRELIMINARY":
+    case "P":
+      return "preliminary";
 
     default:
       return "preliminary";

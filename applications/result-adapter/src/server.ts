@@ -13,6 +13,9 @@ import {
   buildPathologyDocument
 } from "./document-bundle.js";
 
+import {
+  validateFhirBundle
+} from "./validator.js";
 
 const app =
   Fastify({
@@ -233,10 +236,8 @@ app.post<{
       return reply
         .code(201)
         .send({
-
           status:
             "DOCUMENT_CREATED",
-
           document:
             bundle
 
@@ -265,6 +266,89 @@ app.post<{
     }
   }
 );
+
+app.post<{ Body: any }>(
+  "/results/validate",
+  async (request, reply) => {
+
+    try {
+
+      const bundle = request.body;
+
+      if (!bundle) {
+
+        return reply
+          .code(400)
+          .send({
+            status: "INVALID_REQUEST",
+            message:
+              "FHIR Bundle is required"
+          });
+
+      }
+
+      if (
+        bundle.resourceType !==
+        "Bundle"
+      ) {
+
+        return reply
+          .code(400)
+          .send({
+            status: "INVALID_FHIR",
+            message:
+              "FHIR Bundle resource is required"
+          });
+
+      }
+
+      const validation =
+        await validateFhirBundle(
+          bundle
+        );
+
+      return reply
+        .code(
+          validation.valid
+            ? 200
+            : 422
+        )
+        .send({
+          status:
+            validation.valid
+              ? "FHIR_VALID"
+              : "FHIR_INVALID",
+
+          valid:
+            validation.valid,
+
+          issues:
+            validation.issues,
+
+          raw:
+            validation.raw
+        });
+
+    } catch (error: any) {
+
+      request.log.error(error);
+
+      return reply
+        .code(500)
+        .send({
+          status:
+            "FHIR_VALIDATION_ERROR",
+
+          message:
+            error?.message ??
+            "Unable to validate FHIR Bundle"
+        });
+
+    }
+
+  }
+);
+
 
 // ==================================================
 // START

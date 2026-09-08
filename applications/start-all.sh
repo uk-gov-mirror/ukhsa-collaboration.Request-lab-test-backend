@@ -28,6 +28,7 @@ start_service "Terminology" "terminology"
 start_service "FHIR Adapter" "fhir-adapter"
 start_service "Fake MOLIS" "fake-molis"
 start_service "Result Adapter" "result-adapter"
+start_service "HL7-v2 Adapter" "hl7v2-adapter"
 start_service "Orchestrator" "pathology-orchestrator"
 
 echo ""

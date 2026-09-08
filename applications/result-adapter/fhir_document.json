@@ -1,0 +1,200 @@
+{
+    "resourceType": "Bundle",
+    "id": "340f25b7-9703-4f9e-8d1d-1474cbb2e581",
+    "type": "document",
+    "timestamp": "2026-09-07T10:09:00.822Z",
+    "entry": [
+        {
+            "fullUrl": "urn:uuid:composition-MOLIS-10002",
+            "resource": {
+                "resourceType": "Composition",
+                "id": "composition-MOLIS-10002",
+                "status": "final",
+                "type": {
+                    "coding": [
+                        {
+                            "system": "http://loinc.org",
+                            "code": "11502-2",
+                            "display": "Laboratory report"
+                        }
+                    ],
+                    "text": "Laboratory report"
+                },
+                "subject": {
+                    "reference": "Patient/patient-9999999999"
+                },
+                "author": [
+                    {
+                        "reference": "Organization/organization-LAB001",
+                        "display": "Example Pathology Laboratory"
+                    }
+                ],
+                "title": "Haemoglobin A1c - Laboratory Report",
+                "section": [
+                    {
+                        "title": "Results",
+                        "code": {
+                            "coding": [
+                                {
+                                    "system": "http://loinc.org",
+                                    "code": "26436-6",
+                                    "display": "Laboratory studies (set)"
+                                }
+                            ]
+                        },
+                        "text": {
+                            "status": "generated",
+                            "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\">Haemoglobin A1c: 48 mmol/mol</div>"
+                        },
+                        "entry": [
+                            {
+                                "reference": "DiagnosticReport/report-MOLIS-10002"
+                            }
+                        ]
+                    }
+                ]
+            }
+        },
+        {
+            "fullUrl": "urn:uuid:patient-9999999999",
+            "resource": {
+                "resourceType": "Patient",
+                "id": "patient-9999999999",
+                "identifier": [
+                    {
+                        "system": "https://fhir.nhs.uk/Id/nhs-number",
+                        "value": "9999999999"
+                    }
+                ],
+                "name": [
+                    {
+                        "use": "official",
+                        "family": "Smith",
+                        "given": [
+                            "John"
+                        ]
+                    }
+                ],
+                "birthDate": "1975-03-12"
+            }
+        },
+        {
+            "fullUrl": "urn:uuid:organization-LAB001",
+            "resource": {
+                "resourceType": "Organization",
+                "id": "organization-LAB001",
+                "identifier": [
+                    {
+                        "system": "https://fhir.nhs.uk/Id/ods-organization-code",
+                        "value": "LAB001"
+                    }
+                ],
+                "name": "Example Pathology Laboratory"
+            }
+        },
+        {
+            "fullUrl": "urn:uuid:specimen-MOLIS-10002",
+            "resource": {
+                "resourceType": "Specimen",
+                "id": "specimen-MOLIS-10002",
+                "status": "available",
+                "type": {
+                    "coding": [
+                        {
+                            "system": "http://snomed.info/sct",
+                            "code": "119297000",
+                            "display": "Blood specimen"
+                        }
+                    ],
+                    "text": "Blood specimen"
+                },
+                "subject": {
+                    "reference": "Patient/patient-9999999999"
+                }
+            }
+        },
+        {
+            "fullUrl": "urn:uuid:report-MOLIS-10002",
+            "resource": {
+                "resourceType": "DiagnosticReport",
+                "id": "report-MOLIS-10002",
+                "status": "preliminary",
+                "code": {
+                    "coding": [
+                        {
+                            "system": "http://snomed.info/sct",
+                            "code": "999791000000106",
+                            "display": "Haemoglobin A1c level - IFCC standardised"
+                        }
+                    ],
+                    "text": "Haemoglobin A1c"
+                },
+                "subject": {
+                    "reference": "Patient/patient-9999999999"
+                },
+                "performer": [
+                    {
+                        "reference": "Organization/organization-LAB001",
+                        "display": "Example Pathology Laboratory"
+                    }
+                ],
+                "specimen": [
+                    {
+                        "reference": "Specimen/specimen-MOLIS-10002"
+                    }
+                ],
+                "result": [
+                    {
+                        "reference": "Observation/72c74e54-54f6-4ec4-a8a1-6b4d6a16661b"
+                    }
+                ],
+                "conclusion": "H"
+            }
+        },
+        {
+            "fullUrl": "urn:uuid:72c74e54-54f6-4ec4-a8a1-6b4d6a16661b",
+            "resource": {
+                "resourceType": "Observation",
+                "id": "72c74e54-54f6-4ec4-a8a1-6b4d6a16661b",
+                "status": "preliminary",
+                "code": {
+                    "coding": [
+                        {
+                            "system": "http://snomed.info/sct",
+                            "code": "999791000000106",
+                            "display": "Haemoglobin A1c level - IFCC standardised"
+                        }
+                    ],
+                    "text": "Haemoglobin A1c"
+                },
+                "subject": {
+                    "reference": "Patient/patient-9999999999"
+                },
+                "specimen": {
+                    "reference": "Specimen/specimen-MOLIS-10002"
+                },
+                "valueQuantity": {
+                    "value": 48,
+                    "unit": "mmol/mol"
+                },
+                "referenceRange": [
+                    {
+                        "low": {
+                            "value": 20,
+                            "unit": "mmol/mol"
+                        },
+                        "high": {
+                            "value": 42,
+                            "unit": "mmol/mol"
+                        }
+                    }
+                ],
+                "interpretation": [
+                    {
+                        "text": "H"
+                    }
+                ]
+            }
+        }
+    ]
+}
