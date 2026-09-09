@@ -1,9 +1,16 @@
-import { useState } from "react";
-import type { SyntheticEvent } from "react";
+import {
+  useEffect,
+  useState
+} from "react";
+
+import type {
+  SyntheticEvent
+} from "react";
 
 import "./App.css";
 
-import RequestProgress from "./components/RequestProgress";
+import RequestProgress
+  from "./components/RequestProgress";
 
 import type {
   IntegrationProtocol,
@@ -25,43 +32,100 @@ const ORCHESTRATOR_URL =
 // ==================================================
 
 interface LabRequest {
+
   requestId: string;
 
+  protocol?: IntegrationProtocol;
+
+
   patient: {
+
     nhsNumber: string;
+
     firstName: string;
+
     lastName: string;
+
     dateOfBirth: string;
+
     gender: string;
+
   };
+
 
   requester: {
+
     practitionerId: string;
+
     name: string;
+
     organisationCode: string;
+
   };
+
 
   laboratory: {
+
     organisationCode: string;
+
     name: string;
+
   };
+
 
   test: {
+
     localCode: string;
+
     display: string;
+
   };
 
+
   specimen: {
+
     type: string;
+
   };
+
 
   clinicalInformation: string;
 
   requestedAt: string;
+
 }
 
 
+// ==================================================
+// WORKFLOW HISTORY
+// ==================================================
+
+interface WorkflowHistoryEntry {
+
+  state: RltState;
+
+  timestamp: string;
+
+  message: string;
+
+  source:
+    | "RLT"
+    | "USER"
+    | "ORCHESTRATOR"
+    | "MOLIS"
+    | "FHIR_ADAPTER"
+    | "HL7V2_ADAPTER"
+    | "RESULT_ADAPTER";
+
+}
+
+
+// ==================================================
+// REQUEST STATUS
+// ==================================================
+
 interface RequestStatus {
+
   requestId: string;
 
   state: RltState;
@@ -72,84 +136,82 @@ interface RequestStatus {
 
   updatedAt: string;
 
+  history?: WorkflowHistoryEntry[];
+
   error?: string;
+
 }
 
 
+// ==================================================
+// ORCHESTRATION RESPONSE
+// ==================================================
+
 interface OrchestrationResponse {
   status: string;
-
   protocol?: IntegrationProtocol;
-
   requestId: string;
-
   accessionNumber?: string;
-
+  workflow?: RequestStatus;
+  // ------------------------------------------------
+  // Request transformations
+  // ------------------------------------------------
   canonicalRequest?: unknown;
-
-  // ================================================
-  // FHIR request path
-  // ================================================
-
-  fhirRequest?: Record<string, unknown>;
-  fhirResult?: Record<string, unknown>;
-
-  // ================================================
-  // HL7 v2 path
-  // ================================================
-
+  fhirRequest?: unknown;
   hl7Request?: string;
-
-  hl7Result?: string;
-
-  // ================================================
+  // ------------------------------------------------
   // MOLIS
-  // ================================================
-
+  // ------------------------------------------------
   molis?: unknown;
-
   molisProcess?: unknown;
-
-  // ================================================
-  // CANONICAL RESULT
-  // ================================================
-
+  // ------------------------------------------------
+  // Result transformations
+  // ------------------------------------------------
+  fhirResult?: unknown;
+  hl7Result?: string;
   canonicalResult?: {
     test?: {
       code?: string;
       display?: string;
       system?: string;
     };
-
     value?: number | string;
-
     unit?: string;
-
     referenceRange?: {
       low?: number;
       high?: number;
       unit?: string;
     };
-
     interpretation?: string;
-
     status?: string;
   };
-
-  // ================================================
-  // FINAL FHIR DOCUMENT
-  // ================================================
-
   fhirDocument?: any;
-
   validation?: {
     valid: boolean;
     resourceCount?: number;
   };
+  failure?: {
+    type:
+      | "INVALID_SAMPLE"
+      | "SAMPLE_NOT_FOUND";
+    reasonCode?: string;
+    message: string;
+    details?: string;
+    occurredAt: string;
+    source?:
+      | "MOLIS"
+      | "ORCHESTRATOR"
+      | "USER";
+  };
 }
 
 
+// ==================================================
+// FORM
+// ==================================================
+
 interface FormState {
+
   nhsNumber: string;
 
   firstName: string;
@@ -165,14 +227,16 @@ interface FormState {
   specimen: string;
 
   clinicalInformation: string;
+
 }
 
 
 // ==================================================
-// INITIAL FORM
+// INITIAL DATA
 // ==================================================
 
 const INITIAL_FORM: FormState = {
+
   nhsNumber:
     "9999999999",
 
@@ -192,11 +256,37 @@ const INITIAL_FORM: FormState = {
     "HBA1C",
 
   specimen:
-    "Blood specimen",
+    "Venous blood specimen",
 
   clinicalInformation:
     "Routine diabetes monitoring",
+
 };
+
+
+// ==================================================
+// LIMS POLLING STATES
+//
+// Poll only while RLT is waiting for external
+// laboratory / LIMS events.
+// ==================================================
+
+const LIMS_POLLING_STATES:
+  RltState[] = [
+
+    "COLLECTED",
+
+    "RECEIVED",
+
+    "BOOKED_IN",
+
+    "IN_PROGRESS",
+
+    "RESULT_RECEIVED",
+
+    "RESULT_SAVED",
+
+  ];
 
 
 // ==================================================
@@ -204,7 +294,9 @@ const INITIAL_FORM: FormState = {
 // ==================================================
 
 function createRequestId(): string {
+
   return `RLT-${Date.now()}`;
+
 }
 
 
@@ -215,10 +307,15 @@ function findResource(
 
   if (
     !bundle?.entry ||
-    !Array.isArray(bundle.entry)
+    !Array.isArray(
+      bundle.entry
+    )
   ) {
+
     return undefined;
+
   }
+
 
   return bundle.entry
     .map(
@@ -230,6 +327,70 @@ function findResource(
         resource?.resourceType ===
         resourceType
     );
+
+}
+
+
+// ==================================================
+// RESULT VISIBILITY
+//
+// Do not show the result card merely because the
+// backend has entered RESULT_RECEIVED.
+//
+// The actual result-data integration is added in
+// the next step.
+//
+// For now result UI begins at RESULT_NOTIFIED.
+// ==================================================
+
+function hasResultState(
+  state?: RltState
+): boolean {
+
+  if (!state) {
+    return false;
+  }
+
+
+  return [
+    "RESULT_RECEIVED",
+    "RESULT_SAVED",
+    "RESULT_NOTIFIED",
+    "RESULT_VIEWED",
+    "COMPLETED",
+    "LIMS_UPDATED",
+  ].includes(
+    state
+  );
+}
+
+function getNextDemoStateLabel(
+  state: RltState
+): string | undefined {
+
+  switch (state) {
+
+    case "COLLECTED":
+      return "Simulate specimen received";
+
+    case "RECEIVED":
+      return "Simulate specimen booked in";
+
+    case "BOOKED_IN":
+      return "Simulate testing started";
+
+    case "IN_PROGRESS":
+      return "Simulate result received";
+
+    case "RESULT_RECEIVED":
+      return "Simulate result saved";
+
+    case "RESULT_SAVED":
+      return "Simulate result notification";
+
+    default:
+      return undefined;
+  }
 }
 
 
@@ -243,7 +404,10 @@ function App() {
   // FORM
   // ==================================================
 
-  const [form, setForm] =
+  const [
+    form,
+    setForm
+  ] =
     useState<FormState>(
       INITIAL_FORM
     );
@@ -263,7 +427,7 @@ function App() {
 
 
   // ==================================================
-  // REQUEST STATE
+  // REQUEST
   // ==================================================
 
   const [
@@ -283,10 +447,6 @@ function App() {
       null
     );
 
-
-  // ==================================================
-  // RESULT
-  // ==================================================
 
   const [
     result,
@@ -320,12 +480,28 @@ function App() {
 
 
   const [
+    actionLoading,
+    setActionLoading
+  ] =
+    useState(
+      false
+    );
+
+
+  const [
     showTechnicalDetails,
     setShowTechnicalDetails
   ] =
     useState(
       false
     );
+  
+  const nextDemoAction =
+  requestStatus
+    ? getNextDemoStateLabel(
+        requestStatus.state
+      )
+    : undefined;
 
 
   // ==================================================
@@ -340,9 +516,12 @@ function App() {
     setForm(
       previous => ({
         ...previous,
-        [field]: value,
+
+        [field]:
+          value
       })
     );
+
   }
 
 
@@ -375,77 +554,445 @@ function App() {
 
 
     return data;
+
+  }
+
+  async function getRequestContext(
+    id: string
+  ): Promise<OrchestrationResponse> {
+
+    const response =
+      await fetch(
+        `${ORCHESTRATOR_URL}/lab-requests/${id}`
+      );
+
+
+    const data =
+      await response.json();
+
+
+    if (!response.ok) {
+
+      throw new Error(
+        data?.message ??
+        "Unable to retrieve request details"
+      );
+
+    }
+
+
+    return data;
   }
 
 
   // ==================================================
-  // POLL REQUEST STATUS
+  // REFRESH REQUEST STATUS
   // ==================================================
 
-  async function pollRequestStatus(
-    id: string,
-    shouldStop: () => boolean
-  ): Promise<void> {
+  async function refreshRequestStatus(
+    id: string
+  ): Promise<RequestStatus> {
 
-    while (
-      !shouldStop()
-    ) {
-
-      try {
-
-        const status =
-          await getRequestStatus(
-            id
-          );
-
-
-        setRequestStatus(
-          status
-        );
-
-
-        if (
-          status.state ===
-            "COMPLETED" ||
-          status.state ===
-            "FAILED"
-        ) {
-
-          return;
-
-        }
-
-      } catch {
-
-        /*
-         * Temporary 404 is OK.
-         *
-         * The first status request can reach
-         * the orchestrator immediately before
-         * POST /lab-requests has created the
-         * status entry.
-         */
-
-      }
-
-
-      await new Promise<void>(
-        resolve => {
-
-          window.setTimeout(
-            resolve,
-            200
-          );
-
-        }
+    const status =
+      await getRequestStatus(
+        id
       );
 
+
+    setRequestStatus(
+      status
+    );
+
+
+    return status;
+
+  }
+
+  async function viewResult() {
+    if (!requestId) {
+      return;
+    }
+
+    setError(null);
+    setActionLoading(true);
+
+    try {
+      const response =
+        await fetch(
+          `${ORCHESTRATOR_URL}/lab-requests/${requestId}/view-result`,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify({
+                viewedBy:
+                  "Dr John Smith",
+
+                viewedAt:
+                  new Date()
+                    .toISOString(),
+              }),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message ??
+          "Unable to mark result as viewed"
+        );
+      }
+
+      await refreshRequestStatus(
+        requestId
+      );
+
+      const context =
+        await getRequestContext(
+          requestId
+        );
+
+      setResult(
+        context
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to mark result as viewed"
+      );
+    } finally {
+      setActionLoading(
+        false
+      );
+    }
+  }
+
+  async function completeRequest() {
+    if (!requestId) {
+      return;
+    }
+
+    setError(null);
+    setActionLoading(true);
+
+    try {
+      const response =
+        await fetch(
+          `${ORCHESTRATOR_URL}/lab-requests/${requestId}/complete`,
+          {
+            method: "POST",
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message ??
+          "Unable to complete request"
+        );
+      }
+
+      await refreshRequestStatus(
+        requestId
+      );
+
+      const context =
+        await getRequestContext(
+          requestId
+        );
+
+      setResult(
+        context
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to complete request"
+      );
+    } finally {
+      setActionLoading(
+        false
+      );
+    }
+  }
+
+  async function markLimsUpdated() {
+    if (!requestId) {
+      return;
+    }
+
+    setError(null);
+    setActionLoading(true);
+
+    try {
+      const response =
+        await fetch(
+          `${ORCHESTRATOR_URL}/lab-requests/${requestId}/lims-updated`,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify({
+                message:
+                  "Result-consumed acknowledgement sent to LIMS",
+              }),
+          }
+        );
+
+      const data =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message ??
+          "Unable to update LIMS"
+        );
+      }
+
+      await refreshRequestStatus(
+        requestId
+      );
+
+      const context =
+        await getRequestContext(
+          requestId
+        );
+
+      setResult(
+        context
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to update LIMS"
+      );
+    } finally {
+      setActionLoading(
+        false
+      );
     }
   }
 
 
   // ==================================================
+  // AUTOMATIC LIMS STATUS POLLING
+  //
+  // Starts automatically at COLLECTED.
+  //
+  // Continues through:
+  //
+  // RECEIVED
+  // BOOKED_IN
+  // IN_PROGRESS
+  // RESULT_RECEIVED
+  // RESULT_SAVED
+  //
+  // Stops when:
+  //
+  // RESULT_NOTIFIED
+  // INVALID_SAMPLE
+  // SAMPLE_NOT_FOUND
+  // ==================================================
+
+  useEffect(
+    () => {
+
+      if (
+        !requestId ||
+        !requestStatus
+      ) {
+
+        return;
+
+      }
+
+
+      const shouldPoll =
+        LIMS_POLLING_STATES.includes(
+          requestStatus.state
+        );
+
+
+      if (!shouldPoll) {
+
+        return;
+
+      }
+
+
+      let cancelled =
+        false;
+
+
+      // ==============================================
+      // POLL FUNCTION
+      // ==============================================
+
+      const poll =
+        async () => {
+          try {
+            const response =
+              await fetch(
+                `${ORCHESTRATOR_URL}/lab-requests/${requestId}/status`
+              );
+            if (!response.ok) {
+              return;
+            }
+            const status:
+              RequestStatus =
+              await response.json();
+            // ========================================
+            // UPDATE ONLY WHEN SOMETHING CHANGED
+            // ========================================
+            setRequestStatus(
+              previous => {
+                if (
+                  previous?.state ===
+                    status.state &&
+                  previous?.updatedAt ===
+                    status.updatedAt
+                ) {
+                  return previous;
+                }
+                return status;
+              }
+            );
+
+            if (
+              status.state === "INVALID_SAMPLE" ||
+              status.state === "SAMPLE_NOT_FOUND"
+            ) {
+              try {
+                const context =
+                  await getRequestContext(
+                    requestId
+                  );
+                if (!cancelled) {
+                  setResult(
+                    context
+                  );
+                }
+              } catch (err) {
+                console.error(
+                  "Unable to retrieve failure context",
+                  err
+                );
+              }
+            }
+
+            if (
+              status.state ===
+                "RESULT_RECEIVED" ||
+              status.state ===
+                "RESULT_SAVED" ||
+              status.state ===
+                "RESULT_NOTIFIED"
+            ) {
+              try {
+                const context =
+                  await getRequestContext(
+                    requestId
+                  );
+                if (!cancelled) {
+                  setResult(
+                    context
+                  );
+                }
+              } catch (err) {
+                console.error(
+                  "Unable to refresh result context",
+                  err
+                );
+              }
+            }
+
+            if (
+              cancelled
+            ) {
+              return;
+            }
+          } catch (err) {
+            /*
+             * Temporary polling failures should not
+             * fail the RLT business workflow.
+             *
+             * The next poll can retry.
+             */
+            console.error(
+              "Unable to poll request status",
+              err
+            );
+          }
+        };
+
+
+      // ==============================================
+      // POLL IMMEDIATELY
+      // ==============================================
+
+      void poll();
+
+
+      // ==============================================
+      // THEN EVERY SECOND
+      // ==============================================
+
+      const intervalId =
+        window.setInterval(
+          () => {
+
+            void poll();
+
+          },
+          1000
+        );
+
+
+      // ==============================================
+      // CLEANUP
+      // ==============================================
+
+      return () => {
+
+        cancelled =
+          true;
+
+
+        window.clearInterval(
+          intervalId
+        );
+
+      };
+
+    },
+    [
+      requestId,
+      requestStatus?.state
+    ]
+  );
+
+
+  // ==================================================
   // SUBMIT REQUEST
+  //
+  // DRAFT → SENT
   // ==================================================
 
   async function submitRequest(
@@ -457,7 +1004,7 @@ function App() {
 
 
     // ================================================
-    // RESET UI
+    // RESET PREVIOUS UI
     // ================================================
 
     setError(
@@ -489,20 +1036,23 @@ function App() {
       id
     );
 
+
     setSubmitting(
       true
     );
 
 
     // ================================================
-    // BUILD REQUEST
+    // BUILD RLT REQUEST
     // ================================================
 
-    const request:
+    const labRequest:
       LabRequest = {
 
         requestId:
           id,
+
+        protocol,
 
 
         patient: {
@@ -581,7 +1131,7 @@ function App() {
 
 
     // ================================================
-    // INITIAL UI PROGRESS
+    // LOCAL DRAFT STATE
     // ================================================
 
     setRequestStatus({
@@ -590,48 +1140,173 @@ function App() {
         id,
 
       state:
-        "SUBMITTED",
+        "DRAFT",
 
       progress:
-        5,
+        0,
 
       message:
-        "Laboratory request submitted",
+        "Lab test request created as draft",
 
       updatedAt:
         new Date()
           .toISOString(),
 
+      history:
+        []
+
     });
-
-
-    let postCompleted =
-      false;
-
-
-    let pollingPromise:
-      Promise<void> | null =
-      null;
 
 
     try {
 
       // ==============================================
-      // START POST
+      // SEND REQUEST
+      //
+      // Backend authoritative transition:
+      //
+      // DRAFT → SENT
       // ==============================================
 
+      const response =
+        await fetch(
+          `${ORCHESTRATOR_URL}/lab-requests`,
+          {
+
+            method:
+              "POST",
+
+
+            headers: {
+
+              "Content-Type":
+                "application/json",
+
+            },
+
+
+            body:
+              JSON.stringify(
+                labRequest
+              ),
+
+          }
+        );
+
+
+      const data:
+        OrchestrationResponse &
+        {
+          message?: string;
+        } =
+        await response.json();
+
+
+      if (
+        !response.ok
+      ) {
+
+        throw new Error(
+          data?.message ??
+          "Laboratory request failed"
+        );
+
+      }
+
+
+      // ==============================================
+      // STORE SUBMISSION CONTEXT
+      // ==============================================
+
+      setResult(
+        data
+      );
+
+
+      // ==============================================
+      // GET AUTHORITATIVE STATE
+      // ==============================================
+
+      await refreshRequestStatus(
+        id
+      );
+
+
+    } catch (err) {
+
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Unexpected error";
+
+
+      setError(
+        message
+      );
+
+
       /*
-       * IMPORTANT:
+       * Do not manufacture a business failure state.
        *
-       * DO NOT await here.
-       *
-       * We start the POST and then start polling
-       * while the orchestrator processes the request.
+       * If backend created DRAFT but transmission
+       * failed, the workflow can remain DRAFT with
+       * an error.
        */
 
-      const responsePromise =
-        fetch(
-          `${ORCHESTRATOR_URL}/lab-requests`,
+      try {
+
+        await refreshRequestStatus(
+          id
+        );
+
+      } catch {
+
+        // Request may not have been created.
+
+      }
+
+
+    } finally {
+
+      setSubmitting(
+        false
+      );
+
+    }
+
+  }
+
+
+  // ==================================================
+  // LABEL SPECIMEN
+  //
+  // SENT → LABELLED
+  // ==================================================
+
+  async function labelSpecimen() {
+
+    if (!requestId) {
+
+      return;
+
+    }
+
+
+    setError(
+      null
+    );
+
+
+    setActionLoading(
+      true
+    );
+
+
+    try {
+
+      const response =
+        await fetch(
+          `${ORCHESTRATOR_URL}/lab-requests/${requestId}/label`,
           {
 
             method:
@@ -649,9 +1324,8 @@ function App() {
             body:
               JSON.stringify({
 
-                ...request,
-
-                protocol,
+                labelId:
+                  `SPEC-${requestId}`
 
               }),
 
@@ -659,54 +1333,9 @@ function App() {
         );
 
 
-      // ==============================================
-      // START POLLING
-      // ==============================================
-
-      pollingPromise =
-        pollRequestStatus(
-          id,
-          () =>
-            postCompleted
-        );
-
-
-      // ==============================================
-      // WAIT FOR FINAL ORCHESTRATOR RESPONSE
-      // ==============================================
-
-      const response =
-        await responsePromise;
-
-
-      const data:
-        OrchestrationResponse &
-        {
-          message?: string;
-        } =
+      const data =
         await response.json();
 
-
-      postCompleted =
-        true;
-
-
-      // ==============================================
-      // STOP ACTIVE POLLING CLEANLY
-      // ==============================================
-
-      if (
-        pollingPromise
-      ) {
-
-        await pollingPromise;
-
-      }
-
-
-      // ==============================================
-      // HANDLE API ERROR
-      // ==============================================
 
       if (
         !response.ok
@@ -714,140 +1343,29 @@ function App() {
 
         throw new Error(
           data?.message ??
-          "Laboratory request failed"
+          "Unable to label specimen"
         );
 
       }
 
 
-      // ==============================================
-      // STORE FINAL RESULT
-      // ==============================================
-
-      setResult(
-        data
+      await refreshRequestStatus(
+        requestId
       );
 
-
-      // ==============================================
-      // READ FINAL STATUS
-      // ==============================================
-
-      try {
-
-        const finalStatus =
-          await getRequestStatus(
-            id
-          );
-
-
-        setRequestStatus(
-          finalStatus
-        );
-
-      } catch {
-
-        /*
-         * Fallback only.
-         *
-         * Normally the orchestrator should have
-         * COMPLETED in the status store.
-         */
-
-        setRequestStatus({
-
-          requestId:
-            id,
-
-          state:
-            "COMPLETED",
-
-          progress:
-            100,
-
-          message:
-            "Laboratory request completed",
-
-          updatedAt:
-            new Date()
-              .toISOString(),
-
-        });
-
-      }
 
     } catch (err) {
 
-      postCompleted =
-        true;
-
-
-      if (
-        pollingPromise
-      ) {
-
-        await pollingPromise;
-
-      }
-
-
-      const message =
+      setError(
         err instanceof Error
           ? err.message
-          : "Unexpected error";
-
-
-      setError(
-        message
+          : "Unable to label specimen"
       );
 
 
-      // ==============================================
-      // TRY BACKEND FAILED STATE FIRST
-      // ==============================================
-
-      try {
-
-        const failedStatus =
-          await getRequestStatus(
-            id
-          );
-
-
-        setRequestStatus(
-          failedStatus
-        );
-
-      } catch {
-
-        setRequestStatus({
-
-          requestId:
-            id,
-
-          state:
-            "FAILED",
-
-          progress:
-            0,
-
-          message,
-
-          updatedAt:
-            new Date()
-              .toISOString(),
-
-        });
-
-      }
-
     } finally {
 
-      postCompleted =
-        true;
-
-
-      setSubmitting(
+      setActionLoading(
         false
       );
 
@@ -857,40 +1375,168 @@ function App() {
 
 
   // ==================================================
-  // RESET
+  // COLLECT SPECIMEN
+  //
+  // LABELLED → COLLECTED
+  //
+  // Once COLLECTED, useEffect starts polling.
   // ==================================================
 
-  function resetForm() {
+  async function collectSpecimen() {
 
-    setForm(
-      INITIAL_FORM
-    );
+    if (!requestId) {
 
-    setRequestId(
-      null
-    );
+      return;
 
-    setRequestStatus(
-      null
-    );
+    }
 
-    setResult(
-      null
-    );
 
     setError(
       null
     );
 
-    setShowTechnicalDetails(
-      false
+
+    setActionLoading(
+      true
     );
+
+
+    try {
+
+      const response =
+        await fetch(
+          `${ORCHESTRATOR_URL}/lab-requests/${requestId}/collect`,
+          {
+
+            method:
+              "POST",
+
+
+            headers: {
+
+              "Content-Type":
+                "application/json",
+
+            },
+
+
+            body:
+              JSON.stringify({
+
+                collectedBy:
+                  "Dr John Smith",
+
+                collectedAt:
+                  new Date()
+                    .toISOString()
+
+              }),
+
+          }
+        );
+
+
+      const data =
+        await response.json();
+
+
+      if (
+        !response.ok
+      ) {
+
+        throw new Error(
+          data?.message ??
+          "Unable to collect specimen"
+        );
+
+      }
+
+
+      /*
+       * This returns COLLECTED.
+       *
+       * The polling effect sees COLLECTED
+       * and starts automatically.
+       */
+
+      await refreshRequestStatus(
+        requestId
+      );
+
+
+    } catch (err) {
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to collect specimen"
+      );
+
+
+    } finally {
+
+      setActionLoading(
+        false
+      );
+
+    }
 
   }
 
 
   // ==================================================
-  // RESULT RESOURCES
+  // MANUAL STATUS REFRESH
+  //
+  // Useful during POC testing.
+  // ==================================================
+
+  async function refreshStatusManually() {
+    if (!requestId) {
+      return;
+    }
+    setError(
+      null
+    );
+    try {
+      await refreshRequestStatus(
+        requestId
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to refresh request status"
+      );
+    }
+  }
+
+  // ==================================================
+  // RESET
+  // ==================================================
+
+  function resetForm() {
+    setForm(
+      INITIAL_FORM
+    );
+    setRequestId(
+      null
+    );
+    setRequestStatus(
+      null
+    );
+    setResult(
+      null
+    );
+    setError(
+      null
+    );
+    setShowTechnicalDetails(
+      false
+    );
+  }
+
+  // ==================================================
+  // FHIR RESULT RESOURCES
   // ==================================================
 
   const observation =
@@ -912,51 +1558,68 @@ function App() {
   // ==================================================
 
   const resultValue =
+
     observation
       ?.valueQuantity
       ?.value
+
     ??
+
     result
       ?.canonicalResult
       ?.value;
 
 
   const resultUnit =
+
     observation
       ?.valueQuantity
       ?.unit
+
     ??
+
     result
       ?.canonicalResult
       ?.unit
+
     ??
+
     "";
 
 
   // ==================================================
-  // INTERPRETATION
+  // RESULT INTERPRETATION
   // ==================================================
 
   const interpretation =
+
     observation
       ?.interpretation
       ?.[0]
       ?.text
+
     ??
+
     observation
       ?.interpretation
       ?.[0]
       ?.coding
       ?.[0]
       ?.code
+
     ??
+
     result
       ?.canonicalResult
       ?.interpretation
+
     ??
+
     diagnosticReport
       ?.conclusion
+
     ??
+
     "—";
 
 
@@ -965,12 +1628,15 @@ function App() {
   // ==================================================
 
   const referenceLow =
+
     observation
       ?.referenceRange
       ?.[0]
       ?.low
       ?.value
+
     ??
+
     result
       ?.canonicalResult
       ?.referenceRange
@@ -978,12 +1644,15 @@ function App() {
 
 
   const referenceHigh =
+
     observation
       ?.referenceRange
       ?.[0]
       ?.high
       ?.value
+
     ??
+
     result
       ?.canonicalResult
       ?.referenceRange
@@ -991,17 +1660,22 @@ function App() {
 
 
   const referenceUnit =
+
     observation
       ?.referenceRange
       ?.[0]
       ?.low
       ?.unit
+
     ??
+
     result
       ?.canonicalResult
       ?.referenceRange
       ?.unit
+
     ??
+
     resultUnit;
 
 
@@ -1010,12 +1684,17 @@ function App() {
   // ==================================================
 
   const isAbnormal =
+
     interpretation ===
       "ABNORMAL"
+
     ||
+
     interpretation ===
       "H"
+
     ||
+
     interpretation ===
       "HIGH";
 
@@ -1060,9 +1739,118 @@ function App() {
       ?.canonicalResult
       ?.status
 
-      ??
-      "Final";
+    ??
 
+    "Final";
+
+
+  // ==================================================
+  // RESULT VISIBILITY
+  // ==================================================
+
+  const showResult =
+    hasResultState(
+      requestStatus?.state
+    );
+
+
+  // ==================================================
+  // WAITING FOR EXTERNAL LIMS?
+  // ==================================================
+
+  const waitingForLims =
+
+    requestStatus != null
+
+    &&
+
+    LIMS_POLLING_STATES.includes(
+      requestStatus.state
+    );
+  
+  async function advanceDemoLims() {
+    if (!requestId) {
+      return;
+    }
+
+
+    setError(
+      null
+    );
+
+    setActionLoading(
+      true
+    );
+
+
+    try {
+
+      const response =
+        await fetch(
+          `${ORCHESTRATOR_URL}/demo/lab-requests/${requestId}/advance-lims`,
+          {
+            method:
+              "POST"
+          }
+        );
+
+
+      const data =
+        await response.json();
+
+
+      if (!response.ok) {
+
+        throw new Error(
+          data?.message
+          ??
+          "Unable to simulate LIMS event"
+        );
+
+      }
+
+
+      // ========================================
+      // Refresh authoritative workflow
+      // ========================================
+
+      await refreshRequestStatus(
+        requestId
+      );
+
+
+      // ========================================
+      // Result may now have appeared
+      // ========================================
+
+      const context =
+        await getRequestContext(
+          requestId
+        );
+
+
+      setResult(
+        context
+      );
+
+
+    } catch (err) {
+
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to simulate LIMS event"
+      );
+
+
+    } finally {
+
+      setActionLoading(
+        false
+      );
+
+    }
+  }
 
   // ==================================================
   // UI
@@ -1120,10 +1908,10 @@ function App() {
 
 
         {/* ================================================= */}
-        {/* REQUEST FORM */}
+        {/* CREATE REQUEST */}
         {/* ================================================= */}
 
-        {!result && (
+        {!requestId && (
 
           <section className="card">
 
@@ -1180,9 +1968,8 @@ function App() {
 
 
                     <p>
-                      Select the interoperability
-                      protocol used to communicate
-                      with the laboratory.
+                      Select the protocol used to
+                      communicate with the laboratory.
                     </p>
 
                   </div>
@@ -1287,7 +2074,7 @@ function App() {
 
                     <p>
                       Enter the patient information
-                      required for the pathology request.
+                      required for this request.
                     </p>
 
                   </div>
@@ -1303,6 +2090,7 @@ function App() {
                     <label>
                       NHS number
                     </label>
+
 
                     <input
                       type="text"
@@ -1328,6 +2116,7 @@ function App() {
                       First name
                     </label>
 
+
                     <input
                       type="text"
                       value={
@@ -1351,6 +2140,7 @@ function App() {
                     <label>
                       Last name
                     </label>
+
 
                     <input
                       type="text"
@@ -1376,6 +2166,7 @@ function App() {
                       Date of birth
                     </label>
 
+
                     <input
                       type="date"
                       value={
@@ -1399,6 +2190,7 @@ function App() {
                     <label>
                       Gender
                     </label>
+
 
                     <select
                       value={
@@ -1440,7 +2232,7 @@ function App() {
 
 
               {/* ============================================= */}
-              {/* LAB TEST */}
+              {/* TEST */}
               {/* ============================================= */}
 
               <div className="form-section">
@@ -1460,8 +2252,7 @@ function App() {
 
 
                     <p>
-                      Select the test and
-                      specimen required.
+                      Select the requested test and specimen.
                     </p>
 
                   </div>
@@ -1521,12 +2312,12 @@ function App() {
                       }
                     >
 
-                      <option value="Blood specimen">
-                        Blood specimen
-                      </option>
-
                       <option value="Venous blood specimen">
                         Venous blood specimen
+                      </option>
+
+                      <option value="Blood specimen">
+                        Blood specimen
                       </option>
 
                     </select>
@@ -1588,7 +2379,6 @@ function App() {
                         )
                     }
                     rows={4}
-                    placeholder="Enter clinical information"
                     required
                   />
 
@@ -1618,8 +2408,7 @@ function App() {
 
 
                     <p>
-                      The practitioner submitting
-                      the request.
+                      Practitioner submitting the request.
                     </p>
 
                   </div>
@@ -1691,23 +2480,18 @@ function App() {
                   {submitting ? (
 
                     <>
-
                       <span className="spinner" />
-
-                      Processing request...
-
+                      Sending request...
                     </>
 
                   ) : (
 
                     <>
-
                       Request lab test
 
                       <span className="button-arrow">
                         →
                       </span>
-
                     </>
 
                   )}
@@ -1740,7 +2524,7 @@ function App() {
             <div>
 
               <h3>
-                Request failed
+                Request action failed
               </h3>
 
 
@@ -1756,12 +2540,13 @@ function App() {
 
 
         {/* ================================================= */}
-        {/* PROGRESS */}
+        {/* WORKFLOW */}
         {/* ================================================= */}
 
         {requestStatus && (
 
           <section className="card progress-card">
+
 
             <RequestProgress
               state={
@@ -1795,23 +2580,466 @@ function App() {
 
             )}
 
+
+            {/* ============================================= */}
+            {/* ACTIONS */}
+            {/* ============================================= */}
+
+            <div className="workflow-actions">
+
+
+              {requestStatus.state ===
+                "SENT" && (
+
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={
+                    actionLoading
+                  }
+                  onClick={
+                    labelSpecimen
+                  }
+                >
+
+                  {actionLoading
+                    ? "Updating..."
+                    : "Label specimen"}
+
+                </button>
+
+              )}
+
+
+              {requestStatus.state ===
+                "LABELLED" && (
+
+                <button
+                  type="button"
+                  className="primary-button"
+                  disabled={
+                    actionLoading
+                  }
+                  onClick={
+                    collectSpecimen
+                  }
+                >
+
+                  {actionLoading
+                    ? "Updating..."
+                    : "Confirm specimen collected"}
+
+                </button>
+
+              )}
+
+              {requestStatus &&
+                LIMS_POLLING_STATES.includes(
+                  requestStatus.state
+                ) && (
+
+                <div className="demo-simulator">
+
+                  <div className="demo-simulator-header">
+
+                    <div>
+
+                      <div className="eyebrow">
+                        POC DEMO TOOL
+                      </div>
+
+                      <strong>
+                        Simulate next LIMS event
+                      </strong>
+
+                    </div>
+
+                    <span className="demo-badge">
+                      DEMO ONLY
+                    </span>
+
+                  </div>
+
+
+                  <p>
+                    Simulates an external laboratory event
+                    for demonstration purposes. Production
+                    RLT would receive this event from the
+                    LIMS integration layer.
+                  </p>
+
+
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={
+                      actionLoading
+                    }
+                    onClick={
+                      advanceDemoLims
+                    }
+                  >
+                    {actionLoading
+                    ? "Simulating..."
+                    : nextDemoAction
+                      ?? "Simulate next LIMS event"}
+
+                  </button>
+
+                </div>
+
+              )}
+
+              {/* =========================================== */}
+              {/* EXTERNAL LIMS WAITING */}
+              {/* =========================================== */}
+
+              {waitingForLims && (
+
+                <div className="workflow-waiting">
+
+                  <strong>
+
+                    {requestStatus.state ===
+                      "COLLECTED"
+
+                      ? "Waiting for laboratory"
+
+                      : requestStatus.state ===
+                        "RECEIVED"
+
+                      ? "Specimen received"
+
+                      : requestStatus.state ===
+                        "BOOKED_IN"
+
+                      ? "Specimen booked in"
+
+                      : requestStatus.state ===
+                        "IN_PROGRESS"
+
+                      ? "Testing in progress"
+
+                      : requestStatus.state ===
+                        "RESULT_RECEIVED"
+
+                      ? "Result received"
+
+                      : "Result saved"}
+
+                  </strong>
+
+
+                  <p>
+
+                    {requestStatus.message}
+
+                  </p>
+
+
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={
+                      refreshStatusManually
+                    }
+                  >
+                    Refresh status
+                  </button>
+
+                </div>
+
+              )}
+
+
+              {/* =========================================== */}
+              {/* RESULT NOTIFIED */}
+              {/* =========================================== */}
+
+              {requestStatus.state ===
+                "RESULT_NOTIFIED" && (
+
+                <div className="workflow-waiting">
+
+                  <strong>
+                    Result available
+                  </strong>
+
+
+                  <p>
+                    The laboratory has notified RLT
+                    that the pathology result is
+                    available.
+                  </p>
+
+                </div>
+
+              )}
+
+
+              {/* =========================================== */}
+              {/* UNHAPPY PATH */}
+              {/* =========================================== */}
+
+              {requestStatus.state ===
+                "INVALID_SAMPLE" && (
+
+                <div className="workflow-waiting">
+
+                  <strong>
+                    Invalid sample
+                  </strong>
+
+                  <p>
+                    {requestStatus.message}
+                  </p>
+
+                </div>
+
+              )}
+
+
+              {requestStatus.state ===
+                "SAMPLE_NOT_FOUND" && (
+
+                <div className="workflow-waiting">
+
+                  <strong>
+                    Sample not found
+                  </strong>
+
+                  <p>
+                    {requestStatus.message}
+                  </p>
+
+                </div>
+
+              )}
+
+              {requestStatus.state ===
+                "RESULT_NOTIFIED" && (
+
+                <div className="workflow-waiting">
+
+                  <strong>
+                    Result available
+                  </strong>
+
+                  <p>
+                    The laboratory has notified RLT
+                    that the pathology result is available.
+                  </p>
+
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={
+                      actionLoading
+                    }
+                    onClick={
+                      viewResult
+                    }
+                  >
+                    {actionLoading
+                      ? "Updating..."
+                      : "View result"}
+                  </button>
+
+                </div>
+
+              )}
+
+              {requestStatus.state ===
+                "RESULT_VIEWED" && (
+
+                <div className="workflow-waiting">
+
+                  <strong>
+                    Result viewed
+                  </strong>
+
+                  <p>
+                    The pathology result has been viewed
+                    by the requesting user.
+                  </p>
+
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={
+                      actionLoading
+                    }
+                    onClick={
+                      completeRequest
+                    }
+                  >
+                    {actionLoading
+                      ? "Updating..."
+                      : "Complete request"}
+                  </button>
+
+                </div>
+
+              )}
+
+              {requestStatus.state ===
+                "COMPLETED" && (
+
+                <div className="workflow-waiting">
+
+                  <strong>
+                    Request completed
+                  </strong>
+
+                  <p>
+                    The RLT workflow is complete.
+                    The final acknowledgement can now
+                    be sent to the LIMS.
+                  </p>
+
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={
+                      actionLoading
+                    }
+                    onClick={
+                      markLimsUpdated
+                    }
+                  >
+                    {actionLoading
+                      ? "Updating..."
+                      : "Update LIMS"}
+                  </button>
+
+                </div>
+
+              )}
+
+              {requestStatus.state ===
+                "LIMS_UPDATED" && (
+
+                <div className="workflow-complete">
+
+                  <strong>
+                    Workflow complete
+                  </strong>
+
+                  <p>
+                    The final RLT update has been
+                    recorded against the LIMS workflow.
+                  </p>
+
+                </div>
+
+              )}
+
+              {requestStatus?.state === "INVALID_SAMPLE" && (
+                <section className="card unhappy-path-card">
+                  <div className="unhappy-path-icon">
+                    !
+                  </div>
+                  <div className="unhappy-path-content">
+                    <div className="eyebrow">
+                      SAMPLE ISSUE
+                    </div>
+                    <h2>
+                      Invalid sample
+                    </h2>
+                    <p>
+                      {
+                        result?.failure?.message
+                        ??
+                        requestStatus.message
+                      }
+                    </p>
+                    {result?.failure?.reasonCode && (
+                      <div className="failure-detail">
+                        <span>
+                          Reason code
+                        </span>
+                        <strong>
+                          {result.failure.reasonCode}
+                        </strong>
+                      </div>
+                    )}
+                    {result?.failure?.details && (
+                      <div className="failure-detail">
+                        <span>
+                          Details
+                        </span>
+                        <strong>
+                          {result.failure.details}
+                        </strong>
+                      </div>
+                    )}
+                    <div className="failure-detail">
+                      <span>
+                        Request ID
+                      </span>
+                      <strong>
+                        {requestId}
+                      </strong>
+                    </div>
+                    <div className="failure-note">
+                      This request cannot continue because
+                      the specimen is unsuitable for testing.
+                    </div>
+                  </div>
+                </section>
+              )}
+
+              {requestStatus?.state === "SAMPLE_NOT_FOUND" && (
+                <section className="card unhappy-path-card">
+                  <div className="unhappy-path-icon">
+                    !
+                  </div>
+                  <div className="unhappy-path-content">
+                    <div className="eyebrow">
+                      SAMPLE ISSUE
+                    </div>
+                    <h2>
+                      Sample not found
+                    </h2>
+                    <p>
+                      {
+                        result?.failure?.message
+                        ??
+                        requestStatus.message
+                      }
+                    </p>
+                    {result?.failure?.details && (
+                      <div className="failure-detail">
+                        <span>
+                          Details
+                        </span>
+                        <strong>
+                          {result.failure.details}
+                        </strong>
+                      </div>
+                    )}
+                    <div className="failure-note">
+                      Laboratory processing has stopped
+                      because the expected specimen could
+                      not be located.
+                    </div>
+                  </div>
+                </section>
+              )}
+            </div>
           </section>
-
         )}
-
 
         {/* ================================================= */}
         {/* RESULT */}
         {/* ================================================= */}
 
-        {result && (
+        {result &&
+          showResult && 
+          result.canonicalResult != null && (
 
           <section className="card result-card">
 
-
-            {/* ============================================= */}
-            {/* RESULT HEADER */}
-            {/* ============================================= */}
 
             <div className="result-header">
 
@@ -1829,15 +3057,21 @@ function App() {
                       .canonicalResult
                       ?.test
                       ?.display
+
                     ??
+
                     observation
                       ?.code
                       ?.text
+
                     ??
+
                     diagnosticReport
                       ?.code
                       ?.text
+
                     ??
+
                     "Laboratory result"
                   }
 
@@ -1845,21 +3079,26 @@ function App() {
 
 
                 <p>
-                  Final pathology result received
-                  from the laboratory.
+                  Pathology result received from
+                  the laboratory.
                 </p>
 
               </div>
 
-
               <div className="completed-badge">
-
                 <span>
                   ✓
                 </span>
-
-                Completed
-
+                {requestStatus?.state ===
+                  "LIMS_UPDATED"
+                  ? "Workflow complete"
+                  : requestStatus?.state ===
+                    "COMPLETED"
+                  ? "Completed"
+                  : requestStatus?.state ===
+                    "RESULT_VIEWED"
+                  ? "Result viewed"
+                  : "Result available"}
               </div>
 
             </div>
@@ -1870,28 +3109,6 @@ function App() {
             {/* ============================================= */}
 
             <div className="result-meta">
-
-
-              <div className="result-meta-item">
-
-                <span>
-                  Protocol
-                </span>
-
-                <strong>
-
-                  {
-                    (
-                      result.protocol ??
-                      protocol
-                    ) === "HL7_V2"
-                      ? "HL7 v2"
-                      : "FHIR R4"
-                  }
-
-                </strong>
-
-              </div>
 
 
               <div className="result-meta-item">
@@ -1914,12 +3131,13 @@ function App() {
                 </span>
 
                 <strong>
+
                   {
-                    result
-                      .accessionNumber
+                    result.accessionNumber
                     ??
                     "—"
                   }
+
                 </strong>
 
               </div>
@@ -1932,11 +3150,22 @@ function App() {
                 </span>
 
                 <strong>
-
                   {form.firstName}
                   {" "}
                   {form.lastName}
+                </strong>
 
+              </div>
+
+
+              <div className="result-meta-item">
+
+                <span>
+                  Workflow state
+                </span>
+
+                <strong>
+                  {requestStatus?.state}
                 </strong>
 
               </div>
@@ -1990,11 +3219,15 @@ function App() {
                         .canonicalResult
                         ?.test
                         ?.display
+
                       ??
+
                       observation
                         ?.code
                         ?.text
+
                       ??
+
                       "Laboratory test"
                     }
 
@@ -2013,11 +3246,9 @@ function App() {
                   }
                 >
 
-                  {
-                    isAbnormal
-                      ? "Abnormal"
-                      : interpretation
-                  }
+                  {isAbnormal
+                    ? "Abnormal"
+                    : interpretation}
 
                 </div>
 
@@ -2050,8 +3281,11 @@ function App() {
                 >
 
                   {
-                    interpretation === "H"
+                    interpretation ===
+                    "H"
+
                       ? "High"
+
                       : interpretation
                   }
 
@@ -2093,8 +3327,9 @@ function App() {
               <div className="result-detail">
 
                 <span>
-                  Status
+                  Result status
                 </span>
+
 
                 <strong>
                   {displayStatus}
@@ -2112,7 +3347,6 @@ function App() {
 
             <div className="technical-section">
 
-
               <button
                 type="button"
                 className="technical-toggle"
@@ -2126,20 +3360,16 @@ function App() {
 
                 <span>
 
-                  {
-                    showTechnicalDetails
-                      ? "−"
-                      : "+"
-                  }
+                  {showTechnicalDetails
+                    ? "−"
+                    : "+"}
 
                 </span>
 
 
-                {
-                  showTechnicalDetails
-                    ? "Hide technical details"
-                    : "Show technical details"
-                }
+                {showTechnicalDetails
+                  ? "Hide technical details"
+                  : "Show technical details"}
 
               </button>
 
@@ -2158,10 +3388,14 @@ function App() {
 
 
                   {result.fhirRequest != null && (
+
                     <TechnicalBlock
                       title="FHIR R4 request"
-                      value={result.fhirRequest}
+                      value={
+                        result.fhirRequest
+                      }
                     />
+
                   )}
 
 
@@ -2177,20 +3411,16 @@ function App() {
                   )}
 
 
-                  <TechnicalBlock
-                    title="MOLIS order response"
-                    value={
-                      result.molis
-                    }
-                  />
+                  {result.molis != null && (
 
+                    <TechnicalBlock
+                      title="MOLIS response"
+                      value={
+                        result.molis
+                      }
+                    />
 
-                  <TechnicalBlock
-                    title="MOLIS processing"
-                    value={
-                      result.molisProcess
-                    }
-                  />
+                  )}
 
 
                   {result.hl7Result && (
@@ -2204,32 +3434,43 @@ function App() {
 
                   )}
 
+
                   {result.fhirResult != null && (
+
                     <TechnicalBlock
                       title="FHIR result"
-                      value={result.fhirResult}
-                    />
-                  )}
-                  <TechnicalBlock
-                    title="Canonical result"
-                    value={
-                      result.canonicalResult
-                    }
-                  />
-                  <TechnicalBlock
-                    title="Final FHIR pathology document"
-                    value={
-                      result.fhirDocument
-                    }
-                  />
-                  {result.validation && (
-                    <TechnicalBlock
-                      title="FHIR validation"
                       value={
-                        result.validation
+                        result.fhirResult
                       }
                     />
+
                   )}
+
+
+                  {result.canonicalResult != null && (
+
+                    <TechnicalBlock
+                      title="Canonical result"
+                      value={
+                        result.canonicalResult
+                      }
+                    />
+
+                  )}
+
+
+                  {result.fhirDocument != null && (
+
+                    <TechnicalBlock
+                      title="FHIR pathology document"
+                      value={
+                        result.fhirDocument
+                      }
+                    />
+
+                  )}
+
+
                 </div>
 
               )}
@@ -2237,28 +3478,32 @@ function App() {
             </div>
 
 
-            {/* ============================================= */}
-            {/* ACTIONS */}
-            {/* ============================================= */}
-
-            <div className="result-actions">
-
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={
-                  resetForm
-                }
-              >
-
-                ← Request another test
-
-              </button>
-
-            </div>
-
-
           </section>
+
+        )}
+
+
+        {/* ================================================= */}
+        {/* START ANOTHER REQUEST */}
+        {/* ================================================= */}
+
+        {requestId && (
+
+          <div className="result-actions">
+
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={
+                resetForm
+              }
+            >
+
+              ← Start another request
+
+            </button>
+
+          </div>
 
         )}
 
@@ -2279,19 +3524,15 @@ function App() {
 
         <div>
 
-          {
-            protocol ===
-            "HL7_V2"
+          {protocol === "HL7_V2"
 
-              ? (
-                "RLT → HL7 v2 OML^O21 → MOLIS → " +
-                "ORU^R01 → Canonical → FHIR R4"
-              )
+            ? (
+              "RLT → HL7 v2 → LIMS → RLT workflow"
+            )
 
-              : (
-                "RLT → FHIR R4 → MOLIS → FHIR R4"
-              )
-          }
+            : (
+              "RLT → FHIR R4 → LIMS → RLT workflow"
+            )}
 
         </div>
 
@@ -2299,6 +3540,7 @@ function App() {
 
 
     </div>
+
   );
 }
 
@@ -2340,6 +3582,7 @@ function TechnicalBlock({
         {title}
       </h4>
 
+
       <pre>
         {content}
       </pre>
@@ -2347,6 +3590,7 @@ function TechnicalBlock({
     </div>
 
   );
+
 }
 
 

@@ -15,148 +15,113 @@ interface RequestProgressProps {
 interface ProgressStep {
   state: RltState;
   label: string;
-  description?: string;
+  description: string;
 }
 
 
 // ==================================================
-// FHIR R4 FLOW
+// RLT BUSINESS WORKFLOW
 // ==================================================
 
-const fhirSteps: ProgressStep[] = [
+const workflowSteps: ProgressStep[] = [
   {
-    state: "SUBMITTED",
-    label: "Request submitted",
+    state: "DRAFT",
+    label: "Draft",
     description:
-      "Laboratory request received by the orchestrator",
+      "Lab test request created but not yet sent",
   },
 
   {
-    state: "TERMINOLOGY_RESOLVED",
-    label: "Terminology resolved",
+    state: "SENT",
+    label: "Sent",
     description:
-      "Local pathology terminology mapped",
+      "Lab test request sent to the laboratory",
   },
 
   {
-    state: "FHIR_REQUEST_CREATED",
-    label: "FHIR R4 request created",
+    state: "LABELLED",
+    label: "Labelled",
     description:
-      "Canonical request converted to FHIR",
+      "Specimen label created and applied",
   },
 
   {
-    state: "SENT_TO_MOLIS",
-    label: "Sent to MOLIS",
+    state: "COLLECTED",
+    label: "Collected",
     description:
-      "Pathology request sent to the laboratory",
+      "Specimen collected from the patient",
   },
 
   {
-    state: "ORDER_RECEIVED",
-    label: "MOLIS order received",
+    state: "RECEIVED",
+    label: "Received",
     description:
-      "Laboratory accepted the pathology request",
+      "Specimen received by the laboratory",
   },
 
   {
-    state: "RESULT_AVAILABLE",
-    label: "Laboratory result available",
+    state: "BOOKED_IN",
+    label: "Booked in",
     description:
-      "Result retrieved from MOLIS",
+      "Specimen booked into the laboratory system",
   },
 
   {
-    state: "RESULT_MAPPED",
-    label: "Result mapped",
+    state: "IN_PROGRESS",
+    label: "In progress",
     description:
-      "FHIR result converted to canonical result",
+      "Laboratory testing is in progress",
+  },
+
+  {
+    state: "RESULT_RECEIVED",
+    label: "Result received",
+    description:
+      "Laboratory result received",
+  },
+
+  {
+    state: "RESULT_SAVED",
+    label: "Result saved",
+    description:
+      "Laboratory result saved into LIMS",
+  },
+
+  {
+    state: "RESULT_NOTIFIED",
+    label: "Result notified",
+    description:
+      "RLT notified that the result is available",
+  },
+
+  {
+    state: "RESULT_VIEWED",
+    label: "Result viewed",
+    description:
+      "Result viewed by an RLT user",
   },
 
   {
     state: "COMPLETED",
-    label: "Request completed",
+    label: "Completed",
     description:
-      "Laboratory workflow completed",
+      "Lab test request workflow completed",
+  },
+
+  {
+    state: "LIMS_UPDATED",
+    label: "LIMS updated",
+    description:
+      "Final workflow update sent to the LIMS",
   },
 ];
 
 
-// ==================================================
-// HL7 V2 FLOW
-// ==================================================
-
-const hl7Steps: ProgressStep[] = [
-  {
-    state: "SUBMITTED",
-    label: "Request submitted",
-    description:
-      "Laboratory request received by the orchestrator",
-  },
-
-  {
-    state: "TERMINOLOGY_RESOLVED",
-    label: "Terminology resolved",
-    description:
-      "Local pathology terminology mapped",
-  },
-
-  {
-    state: "HL7V2_REQUEST_CREATED",
-    label: "HL7 v2 request created",
-    description:
-      "OML^O21 pathology request generated",
-  },
-
-  {
-    state: "SENT_TO_MOLIS",
-    label: "Sent to MOLIS",
-    description:
-      "HL7 v2 request transmitted to the laboratory",
-  },
-
-  {
-    state: "ORDER_RECEIVED",
-    label: "MOLIS order received",
-    description:
-      "Laboratory accepted the HL7 v2 order",
-  },
-
-  {
-    state: "RESULT_AVAILABLE",
-    label: "Laboratory result available",
-    description:
-      "MOLIS processing completed",
-  },
-
-  {
-    state: "HL7V2_RESULT_RECEIVED",
-    label: "HL7 v2 result received",
-    description:
-      "ORU^R01 result received from MOLIS",
-  },
-
-  {
-    state: "RESULT_MAPPED",
-    label: "Result mapped",
-    description:
-      "HL7 v2 result converted to canonical result",
-  },
-
-  {
-    state: "FHIR_DOCUMENT_CREATED",
-    label: "FHIR document created",
-    description:
-      "Canonical result converted to FHIR R4 pathology document",
-  },
-
-  {
-    state: "COMPLETED",
-    label: "Request completed",
-    description:
-      "Laboratory workflow completed successfully",
-  },
-];
+const terminalFailureStates:
+  RltState[] = [
+    "INVALID_SAMPLE",
+    "SAMPLE_NOT_FOUND",
+  ];
 
 
 // ==================================================
@@ -170,21 +135,17 @@ export default function RequestProgress({
   protocol,
 }: RequestProgressProps) {
 
-  const steps =
-    protocol === "HL7_V2"
-      ? hl7Steps
-      : fhirSteps;
-
-
   const currentIndex =
-    steps.findIndex(
+    workflowSteps.findIndex(
       step =>
         step.state === state
     );
 
 
-  const isFailed =
-    state === "FAILED";
+  const isFailure =
+    terminalFailureStates.includes(
+      state
+    );
 
 
   const protocolLabel =
@@ -196,7 +157,6 @@ export default function RequestProgress({
   return (
     <div className="request-progress">
 
-
       {/* ========================================== */}
       {/* HEADER */}
       {/* ========================================== */}
@@ -206,14 +166,12 @@ export default function RequestProgress({
         <div>
 
           <div className="eyebrow">
-            REQUEST PROCESSING
+            REQUEST STATUS
           </div>
 
-
           <h2>
-            Processing laboratory request
+            Laboratory request workflow
           </h2>
-
 
           <p>
             {message}
@@ -239,7 +197,6 @@ export default function RequestProgress({
           Integration protocol
         </span>
 
-
         <strong>
           {protocolLabel}
         </strong>
@@ -248,7 +205,7 @@ export default function RequestProgress({
 
 
       {/* ========================================== */}
-      {/* BAR */}
+      {/* PROGRESS BAR */}
       {/* ========================================== */}
 
       <div className="progress-track">
@@ -271,25 +228,25 @@ export default function RequestProgress({
 
 
       {/* ========================================== */}
-      {/* STEPS */}
+      {/* BUSINESS WORKFLOW */}
       {/* ========================================== */}
 
       <div className="progress-steps">
 
-        {steps.map(
+        {workflowSteps.map(
           (
             step,
             index
           ) => {
 
             const completed =
-              !isFailed &&
+              !isFailure &&
               currentIndex >= 0 &&
               index < currentIndex;
 
 
             const current =
-              !isFailed &&
+              !isFailure &&
               index === currentIndex;
 
 
@@ -345,14 +302,9 @@ export default function RequestProgress({
                     {step.label}
                   </div>
 
-
-                  {step.description && (
-
-                    <div className="step-description">
-                      {step.description}
-                    </div>
-
-                  )}
+                  <div className="step-description">
+                    {step.description}
+                  </div>
 
                 </div>
 
@@ -366,10 +318,10 @@ export default function RequestProgress({
 
 
       {/* ========================================== */}
-      {/* FAILURE */}
+      {/* UNHAPPY PATH */}
       {/* ========================================== */}
 
-      {isFailed && (
+      {state === "INVALID_SAMPLE" && (
 
         <div className="progress-error">
 
@@ -377,13 +329,11 @@ export default function RequestProgress({
             !
           </div>
 
-
           <div>
 
             <strong>
-              Request failed
+              Invalid sample
             </strong>
-
 
             <p>
               {message}
@@ -395,6 +345,30 @@ export default function RequestProgress({
 
       )}
 
+
+      {state === "SAMPLE_NOT_FOUND" && (
+
+        <div className="progress-error">
+
+          <div className="progress-error-icon">
+            !
+          </div>
+
+          <div>
+
+            <strong>
+              Sample not found
+            </strong>
+
+            <p>
+              {message}
+            </p>
+
+          </div>
+
+        </div>
+
+      )}
 
     </div>
   );

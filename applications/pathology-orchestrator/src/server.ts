@@ -14,10 +14,38 @@ import {
   config
 } from "./config.js";
 
+import type {
+  LimsEvent
+} from "./lims-event.js";
+
 import {
-  getRequestStatus,
-  updateRequestStatus
-} from "./request-status";
+  buildLimsEventMessage,
+  getProgressForState,
+  mapLimsEventToRltState
+} from "./lims-event.js";
+
+import {
+  recordRequestError
+} from "./request-status.js";
+
+import {
+  addLimsEvent,
+  createRequestContext,
+  getRequestContext,
+  updateRequestContext
+} from "./request-store.js";
+
+import {
+  RltWorkflowService
+} from "./workflow-service.js";
+
+import {
+  processReceivedResult
+} from "./result-workflow.js";
+
+import type {
+  RltState
+} from './rlt-state.js';
 
 const app =
   Fastify({
@@ -36,6 +64,20 @@ await app.register(
 const orchestrator =
   new PathologyOrchestrator();
 
+const workflow =
+  new RltWorkflowService();
+
+interface WorkflowActionResponse {
+  status: string;
+
+  requestId: string;
+
+  state: string;
+
+  message: string;
+
+  workflow: unknown;
+}
 
 app.get(
   "/health",
@@ -65,7 +107,9 @@ app.get(
     };
 
     const status =
-      getRequestStatus(requestId);
+      workflow.getStatus(
+        requestId
+      );
 
     if (!status) {
 
@@ -83,6 +127,1163 @@ app.get(
   }
 );
 
+app.get(
+  "/lab-requests/:requestId",
+  async (
+    request,
+    reply
+  ) => {
+
+    const {
+      requestId
+    } =
+      request.params as {
+        requestId: string;
+      };
+
+
+    const context =
+      getRequestContext(
+        requestId
+      );
+
+
+    const status =
+      workflow.getStatus(
+        requestId
+      );
+
+
+    if (
+      !context ||
+      !status
+    ) {
+
+      return reply
+        .code(404)
+        .send({
+          message:
+            "Request not found"
+        });
+
+    }
+
+
+    return reply.send({
+
+      ...context,
+
+      workflow:
+        status
+
+    });
+
+  }
+);
+
+app.get(
+  "/lab-requests/:requestId/history",
+  async (
+    request,
+    reply
+  ) => {
+
+    const {
+      requestId
+    } =
+      request.params as {
+        requestId: string;
+      };
+
+
+    const status =
+      workflow.getStatus(
+        requestId
+      );
+
+
+    if (!status) {
+
+      return reply
+        .code(404)
+        .send({
+          message:
+            "Request not found"
+        });
+
+    }
+
+
+    return reply.send({
+      requestId,
+
+      currentState:
+        status.state,
+
+      history:
+        workflow.getHistory(
+          requestId
+        )
+    });
+  }
+);
+
+// ==================================================
+// LABEL SPECIMEN
+//
+// SENT → LABELLED
+//
+// RLT-owned action.
+// Does NOT call MOLIS.
+// ==================================================
+
+app.post<{
+  Params: {
+    requestId: string;
+  };
+
+  Body: {
+    labelId?: string;
+  };
+}>(
+  "/lab-requests/:requestId/label",
+  async (
+    request,
+    reply
+  ) => {
+
+    const {
+      requestId
+    } =
+      request.params;
+
+
+    try {
+
+      // ==========================================
+      // REQUEST MUST EXIST
+      // ==========================================
+
+      const context =
+        getRequestContext(
+          requestId
+        );
+
+
+      if (!context) {
+
+        return reply
+          .code(404)
+          .send({
+
+            status:
+              "REQUEST_NOT_FOUND",
+
+            message:
+              `Request ${requestId} not found`
+
+          });
+
+      }
+
+      const now =
+        new Date().toISOString();
+
+
+      updateRequestContext(
+        requestId,
+        {
+
+          specimenWorkflow: {
+
+            ...context.specimenWorkflow,
+
+            labelId:
+              request.body?.labelId,
+
+            labelledAt:
+              now
+
+          }
+
+        }
+      );
+
+      // ==========================================
+      // TRANSITION
+      //
+      // SENT → LABELLED
+      // ==========================================
+
+      const status =
+        workflow.transition(
+          requestId,
+          "LABELLED",
+          20,
+          request.body?.labelId
+            ? `Specimen labelled: ${request.body.labelId}`
+            : "Specimen labelled",
+          "USER"
+        );
+
+
+      return reply
+        .code(200)
+        .send({
+
+          status:
+            "LABELLED",
+
+          requestId,
+
+          state:
+            status.state,
+
+          message:
+            status.message,
+
+          labelId:
+            request.body?.labelId,
+
+          workflow:
+            status
+
+        });
+
+
+    } catch (error) {
+
+      request.log.error(
+        error
+      );
+
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to label specimen";
+
+
+      return reply
+        .code(409)
+        .send({
+
+          status:
+            "INVALID_WORKFLOW_TRANSITION",
+
+          requestId,
+
+          message,
+
+          workflow:
+            workflow.getStatus(
+              requestId
+            )
+
+        });
+
+    }
+
+  }
+);
+
+// ==================================================
+// COLLECT SPECIMEN
+//
+// LABELLED → COLLECTED
+//
+// RLT-owned action.
+// Does NOT call MOLIS.
+// ==================================================
+
+app.post<{
+  Params: {
+    requestId: string;
+  };
+  Body: {
+    collectedBy?: string;
+    collectedAt?: string;
+  };
+}>(
+  "/lab-requests/:requestId/collect",
+  async (
+    request,
+    reply
+  ) => {
+
+    const {
+      requestId
+    } =
+      request.params;
+
+
+    try {
+
+      // ==========================================
+      // REQUEST MUST EXIST
+      // ==========================================
+
+      const context =
+        getRequestContext(
+          requestId
+        );
+
+
+      if (!context) {
+
+        return reply
+          .code(404)
+          .send({
+
+            status:
+              "REQUEST_NOT_FOUND",
+
+            message:
+              `Request ${requestId} not found`
+
+          });
+
+      }
+
+      // ==========================================
+      // BUILD AUDIT MESSAGE
+      // ==========================================
+
+      const collectedBy =
+        request.body?.collectedBy;
+
+
+      const message =
+        collectedBy
+          ? `Specimen collected by ${collectedBy}`
+          : "Specimen collected";
+      
+      const collectedAt =
+        request.body?.collectedAt
+        ??
+        new Date().toISOString();
+
+
+      updateRequestContext(
+        requestId,
+        {
+          specimenWorkflow: {
+            ...context.specimenWorkflow,
+            collectedAt,
+            collectedBy:
+              request.body?.collectedBy
+          }
+
+        }
+      );
+      // ==========================================
+      // TRANSITION
+      //
+      // LABELLED → COLLECTED
+      // ==========================================
+
+      const status =
+        workflow.transition(
+          requestId,
+          "COLLECTED",
+          30,
+          message,
+          "USER"
+        );
+
+
+      return reply
+        .code(200)
+        .send({
+
+          status:
+            "COLLECTED",
+
+          requestId,
+
+          state:
+            status.state,
+
+          collectedBy,
+
+          collectedAt: 
+            collectedAt,
+
+          message:
+            status.message,
+
+          workflow:
+            status
+
+        });
+
+
+    } catch (error) {
+
+      request.log.error(
+        error
+      );
+
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to collect specimen";
+
+
+      return reply
+        .code(409)
+        .send({
+
+          status:
+            "INVALID_WORKFLOW_TRANSITION",
+
+          requestId,
+
+          message,
+
+          workflow:
+            workflow.getStatus(
+              requestId
+            )
+
+        });
+
+    }
+
+  }
+);
+
+// ==================================================
+// RECEIVE EXTERNAL LIMS EVENT
+//
+// This endpoint represents an event/notification
+// arriving FROM the external LIMS integration.
+//
+// RLT does NOT command MOLIS through this endpoint.
+// ==================================================
+
+app.post<{
+  Params: {
+    requestId: string;
+  };
+
+  Body: LimsEvent;
+}>(
+  "/lab-requests/:requestId/lims-events",
+  async (
+    request,
+    reply
+  ) => {
+
+    const {
+      requestId
+    } =
+      request.params;
+
+
+    const event =
+      request.body;
+
+
+    try {
+
+      // ==========================================
+      // REQUEST MUST EXIST
+      // ==========================================
+
+      const context =
+        getRequestContext(
+          requestId
+        );
+
+
+      if (!context) {
+
+        return reply
+          .code(404)
+          .send({
+
+            status:
+              "REQUEST_NOT_FOUND",
+
+            message:
+              `Request ${requestId} not found`
+
+          });
+
+      }
+
+
+      // ==========================================
+      // ACCESSION NUMBER CHECK
+      // ==========================================
+
+      if (
+        event.accessionNumber &&
+        context.accessionNumber &&
+        event.accessionNumber !==
+          context.accessionNumber
+      ) {
+
+        return reply
+          .code(409)
+          .send({
+
+            status:
+              "ACCESSION_NUMBER_MISMATCH",
+
+            message:
+              `Event accession ${event.accessionNumber} ` +
+              `does not match request accession ` +
+              `${context.accessionNumber}`
+
+          });
+
+      }      
+
+      // ==========================================
+      // STORE ORIGINAL EXTERNAL EVENT
+      // ==========================================
+
+      const storedEvent:
+        LimsEvent = {
+          ...event,
+          timestamp:
+            event.timestamp ??
+            new Date().toISOString()
+        };
+
+
+      addLimsEvent(
+        requestId,
+        storedEvent
+      );
+
+      // ==========================================
+      // RESULT RECEIVED
+      //
+      // Special case.
+      //
+      // When LIMS tells us the result exists,
+      // RLT retrieves and processes the actual result.
+      // ==========================================
+      if (
+        event.eventType ===
+        "RESULT_RECEIVED"
+      ) {
+        const currentContext =
+          getRequestContext(
+            requestId
+          );
+        if (!currentContext) {
+          return reply
+            .code(404)
+            .send({
+              status:
+                "REQUEST_NOT_FOUND",
+              message:
+                `Request ${requestId} not found`
+            });
+        }
+      // ----------------------------------------
+      // Retrieve and transform actual result
+      // ----------------------------------------
+      const updatedContext =
+        await processReceivedResult(
+          orchestrator,
+          currentContext
+        );
+
+      // ----------------------------------------
+      // IN_PROGRESS → RESULT_RECEIVED
+      // ----------------------------------------
+      const status =
+        workflow.transition(
+          requestId,
+          "RESULT_RECEIVED",
+          70,
+          event.message ??
+            "Laboratory result received and processed",
+          "MOLIS"
+        );
+
+      return reply
+        .code(200)
+        .send({
+          status:
+            "EVENT_ACCEPTED",
+          requestId,
+          event:
+            storedEvent,
+          workflow:
+            status,
+          result: {
+            canonicalResult:
+              updatedContext.canonicalResult,
+            fhirDocument:
+              updatedContext.fhirDocument
+          }
+        });
+      }
+
+      if (
+        event.eventType === "INVALID_SAMPLE" ||
+        event.eventType === "SAMPLE_NOT_FOUND"
+      ) {
+
+        const failureState =
+          mapLimsEventToRltState(
+            event.eventType
+          );
+
+        const occurredAt =
+          event.timestamp ??
+          new Date().toISOString();
+
+        const failureMessage =
+          event.message ??
+          buildLimsEventMessage(
+            event.eventType
+          );
+
+        updateRequestContext(
+          requestId,
+          {
+            failure: {
+              type:
+                failureState as
+                  | "INVALID_SAMPLE"
+                  | "SAMPLE_NOT_FOUND",
+              reasonCode:
+                event.reasonCode,
+              message:
+                failureMessage,
+              details:
+                event.details,
+              occurredAt,
+              source:
+                "MOLIS"
+            }
+          }
+        );
+        const status =
+          workflow.transition(
+            requestId,
+            failureState,
+            100,
+            failureMessage,
+            "MOLIS"
+          );
+
+        return reply
+          .code(200)
+          .send({
+            status:
+              "EVENT_ACCEPTED",
+            requestId,
+            event:
+              storedEvent,
+            failure: {
+              type:
+                failureState,
+              reasonCode:
+                event.reasonCode,
+              message:
+                failureMessage,
+              details:
+                event.details,
+              occurredAt
+            },
+            workflow:
+              status
+          });
+      }
+      // ==========================================
+      // MAP EXTERNAL EVENT → RLT STATE
+      // ==========================================
+
+      const nextState =
+        mapLimsEventToRltState(
+          event.eventType
+        );
+
+
+      const progress =
+        getProgressForState(
+          nextState
+        );
+      // ==========================================
+      // TRANSITION RLT WORKFLOW
+      // ==========================================
+
+      const status =
+        workflow.transition(
+          requestId,
+          nextState,
+          progress,
+          event.message ??
+            buildLimsEventMessage(
+              event.eventType
+            ),
+          "MOLIS"
+        );
+
+
+      return reply
+        .code(200)
+        .send({
+          status:
+            "EVENT_ACCEPTED",
+          requestId,
+          event:
+            storedEvent,
+          workflow:
+            status
+        });
+    } catch (error) {
+      request.log.error(
+        error
+      );
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to process LIMS event";
+
+      return reply
+        .code(409)
+        .send({
+          status:
+            "LIMS_EVENT_REJECTED",
+          requestId,
+          message,
+          workflow:
+            workflow.getStatus(
+              requestId
+            )
+        });
+    }
+  }
+);
+
+// ==================================================
+// RESULT VIEWED
+//
+// RESULT_NOTIFIED → RESULT_VIEWED
+//
+// RLT-owned user action.
+// ==================================================
+
+app.post<{
+  Params: {
+    requestId: string;
+  };
+
+  Body: {
+    viewedBy?: string;
+    viewedAt?: string;
+  };
+}>(
+  "/lab-requests/:requestId/view-result",
+  async (
+    request,
+    reply
+  ) => {
+
+    const {
+      requestId
+    } =
+      request.params;
+
+
+    try {
+
+      const context =
+        getRequestContext(
+          requestId
+        );
+
+
+      if (!context) {
+
+        return reply
+          .code(404)
+          .send({
+
+            status:
+              "REQUEST_NOT_FOUND",
+
+            message:
+              `Request ${requestId} not found`
+
+          });
+
+      }
+
+
+      const viewedAt =
+        request.body?.viewedAt
+        ??
+        new Date().toISOString();
+
+
+      const viewedBy =
+        request.body?.viewedBy;
+
+
+      const status =
+        workflow.transition(
+          requestId,
+          "RESULT_VIEWED",
+          90,
+          viewedBy
+            ? `Result viewed by ${viewedBy}`
+            : "Laboratory result viewed",
+          "USER"
+        );
+      
+      updateRequestContext(
+        requestId,
+        {
+          resultWorkflow: {
+            ...context.resultWorkflow,
+            viewedAt,
+            viewedBy
+          }
+        }
+      );
+
+
+      return reply
+        .code(200)
+        .send({
+
+          status:
+            "RESULT_VIEWED",
+
+          requestId,
+
+          viewedBy,
+
+          viewedAt,
+
+          workflow:
+            status
+
+        });
+
+
+    } catch (error) {
+
+      request.log.error(
+        error
+      );
+
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to mark result as viewed";
+
+
+      return reply
+        .code(409)
+        .send({
+
+          status:
+            "INVALID_WORKFLOW_TRANSITION",
+
+          requestId,
+
+          message,
+
+          workflow:
+            workflow.getStatus(
+              requestId
+            )
+
+        });
+
+    }
+
+  }
+);
+
+// ==================================================
+// COMPLETE REQUEST
+//
+// RESULT_VIEWED → COMPLETED
+//
+// RLT-owned workflow action.
+// ==================================================
+
+app.post<{
+  Params: {
+    requestId: string;
+  };
+}>(
+  "/lab-requests/:requestId/complete",
+  async (
+    request,
+    reply
+  ) => {
+
+    const {
+      requestId
+    } =
+      request.params;
+
+
+    try {
+
+      const context =
+        getRequestContext(
+          requestId
+        );
+
+
+      if (!context) {
+
+        return reply
+          .code(404)
+          .send({
+
+            status:
+              "REQUEST_NOT_FOUND",
+
+            message:
+              `Request ${requestId} not found`
+
+          });
+
+      }
+
+
+      const completedAt =
+        new Date()
+          .toISOString();
+
+
+      updateRequestContext(
+        requestId,
+        {
+
+          resultWorkflow: {
+
+            ...context.resultWorkflow,
+
+            completedAt
+
+          }
+
+        }
+      );
+
+
+      const status =
+        workflow.transition(
+          requestId,
+          "COMPLETED",
+          95,
+          "Lab test request completed",
+          "RLT"
+        );
+
+
+      return reply
+        .code(200)
+        .send({
+
+          status:
+            "COMPLETED",
+
+          requestId,
+
+          completedAt,
+
+          workflow:
+            status
+
+        });
+
+
+    } catch (error) {
+
+      request.log.error(
+        error
+      );
+
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to complete request";
+
+
+      return reply
+        .code(409)
+        .send({
+
+          status:
+            "INVALID_WORKFLOW_TRANSITION",
+
+          requestId,
+
+          message,
+
+          workflow:
+            workflow.getStatus(
+              requestId
+            )
+
+        });
+
+    }
+
+  }
+);
+
+// ==================================================
+// LIMS UPDATED
+//
+// COMPLETED → LIMS_UPDATED
+//
+// Represents RLT successfully sending the final
+// acknowledgement/update back to the LIMS.
+// ==================================================
+
+app.post<{
+  Params: {
+    requestId: string;
+  };
+
+  Body: {
+    message?: string;
+  };
+}>(
+  "/lab-requests/:requestId/lims-updated",
+  async (
+    request,
+    reply
+  ) => {
+
+    const {
+      requestId
+    } =
+      request.params;
+
+
+    try {
+
+      const context =
+        getRequestContext(
+          requestId
+        );
+
+
+      if (!context) {
+
+        return reply
+          .code(404)
+          .send({
+
+            status:
+              "REQUEST_NOT_FOUND",
+
+            message:
+              `Request ${requestId} not found`
+
+          });
+
+      }
+
+
+      const limsUpdatedAt =
+        new Date()
+          .toISOString();
+
+
+      updateRequestContext(
+        requestId,
+        {
+
+          resultWorkflow: {
+
+            ...context.resultWorkflow,
+
+            limsUpdatedAt
+
+          }
+
+        }
+      );
+
+
+      const status =
+        workflow.transition(
+          requestId,
+          "LIMS_UPDATED",
+          100,
+          request.body?.message
+            ??
+            "Final status update sent to LIMS",
+          "ORCHESTRATOR"
+        );
+
+
+      return reply
+        .code(200)
+        .send({
+
+          status:
+            "LIMS_UPDATED",
+
+          requestId,
+
+          limsUpdatedAt,
+
+          workflow:
+            status
+
+        });
+
+
+    } catch (error) {
+
+      request.log.error(
+        error
+      );
+
+
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unable to update LIMS state";
+
+
+      return reply
+        .code(409)
+        .send({
+
+          status:
+            "INVALID_WORKFLOW_TRANSITION",
+
+          requestId,
+
+          message,
+
+          workflow:
+            workflow.getStatus(
+              requestId
+            )
+
+        });
+
+    }
+
+  }
+);
+
 app.post<{
   Body: LabTestRequest;
 }>(
@@ -92,46 +1293,81 @@ app.post<{
     reply
   ) => {
 
+    const requestId =
+      request.body.requestId;
+
+
+    const protocol =
+      request.body.protocol ??
+      "FHIR_R4";
+
+
     try {
 
       console.log(
-        `[ORCHESTRATOR] Starting ` +
-        `${request.body.requestId}`
+        `[ORCHESTRATOR] Creating ${requestId}`
       );
-
-      const requestId =
-        request.body.requestId;
-
-      updateRequestStatus(
-        requestId,
-        "SUBMITTED",
-        5,
-        "Lab request submitted"
-        );
 
 
       // ==========================================
       // STEP 1
-      // Resolve terminology
+      // CREATE RLT DRAFT
       // ==========================================
 
-      const terminology =
-        await orchestrator
-          .resolveTerminology(
-            request.body.test.localCode
-          );
-      
-      updateRequestStatus(
+      if (
+        workflow.getStatus(
+          requestId
+        )
+      ) {
+
+        return reply
+          .code(409)
+          .send({
+
+            status:
+              "REQUEST_ALREADY_EXISTS",
+
+            message:
+              `Request ${requestId} already exists`
+
+          });
+
+      }
+
+
+      workflow.createDraft(
+        requestId
+      );
+
+
+      createRequestContext(
         requestId,
-        "TERMINOLOGY_RESOLVED",
-        15,
-        "Pathology terminology resolved"
+        protocol
       );
 
 
       // ==========================================
       // STEP 2
-      // Build canonical request
+      // RESOLVE TERMINOLOGY
+      //
+      // Technical operation only.
+      // Does NOT change RLT business state.
+      // ==========================================
+
+      const terminology =
+        await orchestrator
+          .resolveTerminology(
+            request.body
+              .test
+              .localCode
+          );
+
+
+      // ==========================================
+      // STEP 3
+      // BUILD CANONICAL REQUEST
+      //
+      // Technical operation only.
       // ==========================================
 
       const canonicalRequest =
@@ -141,348 +1377,232 @@ app.post<{
           );
 
 
-      // ==========================================
-      // STEP 2A
-      // Normalize terminology
-      // ==========================================
-
-      const fhirTerminology =
-        orchestrator
-          .normalizeTerminology(
-            terminology
-          );
+      updateRequestContext(
+        requestId,
+        {
+          canonicalRequest
+        }
+      );
 
 
       // ==========================================
-    // STEP 2B
-    // Canonical → FHIR Adapter
-    // ==========================================
+      // STEP 4
+      // PROTOCOL-SPECIFIC TRANSPORT
+      // ==========================================
 
-        const protocol =
-          request.body.protocol ??
-          "FHIR_R4";
+      if (
+        protocol ===
+        "HL7_V2"
+      ) {
+
+        // ----------------------------------------
+        // Canonical → HL7 v2
+        // ----------------------------------------
+
+        const hl7Response =
+          await orchestrator
+            .buildHl7V2Request(
+              canonicalRequest,
+              terminology
+            );
+
+
+        // ----------------------------------------
+        // HL7 v2 → MOLIS
+        // ----------------------------------------
+
+        const molisResponse =
+          await orchestrator
+            .sendHl7V2ToMolis(
+              hl7Response.message
+            );
+
+
+        const accessionNumber =
+          molisResponse
+            .accessionNumber;
+
 
         if (
-          protocol !== "FHIR_R4" &&
-          protocol !== "HL7_V2"
+          !accessionNumber
         ) {
+
           throw new Error(
-            `Unsupported protocol: ${protocol}`
+            "MOLIS did not return an accession number"
           );
+
         }
 
-        if (protocol === "HL7_V2") {
 
-      // ==========================================
-      // STEP 2B-HL7
-      // Canonical → HL7 v2 Adapter
-      // ==========================================
-
-      const hl7Response =
-        await orchestrator
-          .buildHl7V2Request(
-            canonicalRequest,
-            terminology
-          );
-
-      updateRequestStatus(
-        requestId,
-        "HL7V2_REQUEST_CREATED",
-        35,
-        "HL7 v2 pathology request created"
-      );
-
-      // ==========================================
-      // STEP 2C-HL7
-      // HL7 v2 → MOLIS
-      // ==========================================
-      const molisResponse =
-        await orchestrator
-          .sendHl7V2ToMolis(
-            hl7Response.message
-          );
-
-      updateRequestStatus(
-        requestId,
-        "SENT_TO_MOLIS",
-        50,
-        "HL7 v2 pathology request sent to MOLIS"
-      );
-
-      // ==========================================
-      // STEP 3A-HL7
-      // MOLIS order processing
-      // ==========================================
-
-      const accessionNumber =
-        molisResponse.accessionNumber;
-
-      const molisProcessResponse =
-        await orchestrator
-          .processMolisOrder(
-            accessionNumber
-          );
-
-
-      updateRequestStatus(
-        requestId,
-        "ORDER_RECEIVED",
-        60,
-        "MOLIS order received"
-      );
-
-      // ==========================================
-      // STEP 4F-HL7
-      // Get HL7 v2 result from MOLIS
-      // ==========================================
-
-      updateRequestStatus(
-        requestId,
-        "RESULT_AVAILABLE",
-        75,
-        "HL7 v2 pathology result received from MOLIS"
-      );
-
-      const hl7Result =
-        await orchestrator
-          .getHl7V2ResultFromMolis(
-            accessionNumber
-          );
-
-      updateRequestStatus(
-        requestId,
-        "HL7V2_RESULT_RECEIVED",
-        75,
-        "HL7 v2 ORU^R01 result received from MOLIS"
-      );
-
-
-      // ==========================================
-      // STEP 4F-HL7
-      // HL7 v2 Result → Canonical Result
-      // ==========================================
-
-      const canonicalResult =
-        await orchestrator
-          .convertHl7V2ResultToCanonical(
-            hl7Result
-          );
-
-      updateRequestStatus(
-        requestId,
-        "RESULT_MAPPED",
-        90,
-        "HL7 v2 result mapped to canonical result"
-      );
-
-      const fhirDocumentResponse =
-        await orchestrator
-          .buildFhirDocumentFromCanonicalResult(
-            canonicalRequest,
-            canonicalResult,
-            accessionNumber
-          );
-
-      updateRequestStatus(
-        requestId,
-        "FHIR_DOCUMENT_CREATED",
-        95,
-        "FHIR pathology document created from canonical result"
-      );
-
-      updateRequestStatus(
-        requestId,
-        "COMPLETED",
-        100,
-        "Laboratory request completed"
-      );
-
-      return reply
-        .code(200)
-        .send({
-          status: "FHIR_DOCUMENT_CREATED",
-          protocol,
+        updateRequestContext(
           requestId,
-          accessionNumber,
-          canonicalRequest,
-          hl7Request: hl7Response.message,
-          molis: molisResponse,
-          molisProcess: molisProcessResponse,
-          hl7Result,
-          canonicalResult,
-          fhirDocument:
-            fhirDocumentResponse.document
-        });
-    }
+          {
 
-    // ==========================================
-    // STEP 2B-FHIR
-    // Canonical → FHIR Adapter
-    // ==========================================
+            accessionNumber,
 
-    const fhirResponse =
-      await orchestrator
-        .buildFhirRequest(
-          canonicalRequest,
-          fhirTerminology
+            hl7Request:
+              hl7Response.message
+
+          }
         );
-    
-    updateRequestStatus(
-      requestId,
-      "FHIR_REQUEST_CREATED",
-      35,
-      "FHIR pathology request created"
-    );
-
-    updateRequestStatus(
-        requestId,
-        "SENT_TO_MOLIS",
-        50,
-        "Pathology request sent to MOLIS"
-    );
-
-    // ==========================================
-    // STEP 3A
-    // Process MOLIS order
-    // ==========================================
-
-    const accessionNumber =
-    fhirResponse
-        ?.molis
-        ?.accessionNumber;
 
 
-    if (!accessionNumber) {
+        // ========================================
+        // DRAFT → SENT
+        //
+        // This is the FIRST real business
+        // lifecycle transition.
+        // ========================================
 
-    throw new Error(
-        "FHIR Adapter did not return a MOLIS accession number"
-    );
-
-    }
-
-    const molisProcessResponse =
-    await orchestrator
-        .processMolisOrder(
-        accessionNumber
+        workflow.transition(
+          requestId,
+          "SENT",
+          10,
+          "Lab test request sent to MOLIS",
+          "ORCHESTRATOR"
         );
-    
-    updateRequestStatus(
-        requestId,
-        "ORDER_RECEIVED",
-        60,
-        "MOLIS order received"
-    );
 
 
-    // ==========================================
-    // STEP 3B
-    // Retrieve FHIR result
-    // ==========================================
+        return reply
+          .code(201)
+          .send({
 
-    const molisFhirResult =
-    await orchestrator
-        .getMolisFhirResult(
-        accessionNumber
+            status:
+              "SENT",
+
+            protocol,
+
+            requestId,
+
+            accessionNumber,
+
+            workflow:
+              workflow.getStatus(
+                requestId
+              ),
+
+            canonicalRequest,
+
+            hl7Request:
+              hl7Response.message,
+
+            molis:
+              molisResponse
+
+          });
+
+      }
+
+
+      // ==========================================
+      // FHIR R4 PATH
+      // ==========================================
+
+      if (
+        protocol ===
+        "FHIR_R4"
+      ) {
+
+        const fhirTerminology =
+          orchestrator
+            .normalizeTerminology(
+              terminology
+            );
+
+
+        // ----------------------------------------
+        // Canonical → FHIR Adapter
+        //
+        // Your current FHIR adapter call already
+        // sends the resulting request to MOLIS.
+        // ----------------------------------------
+
+        const fhirResponse =
+          await orchestrator
+            .buildFhirRequest(
+              canonicalRequest,
+              fhirTerminology
+            );
+
+
+        const accessionNumber =
+          fhirResponse
+            ?.molis
+            ?.accessionNumber;
+
+
+        if (
+          !accessionNumber
+        ) {
+
+          throw new Error(
+            "FHIR Adapter did not return a MOLIS accession number"
+          );
+
+        }
+
+
+        updateRequestContext(
+          requestId,
+          {
+
+            accessionNumber,
+
+            fhirRequest:
+              fhirResponse.fhir
+
+          }
         );
-    
-    updateRequestStatus(
-        requestId,
-        "RESULT_AVAILABLE",
-        75,
-        "Laboratory result received from MOLIS"
-    );
-    
-    
-    // ==========================================
-    // STEP 4
-    // FHIR Result → Canonical Result
-    // ==========================================
 
-    const canonicalResultResponse =
-    await orchestrator
-        .convertFhirResultToCanonical(
-        molisFhirResult
+
+        // ========================================
+        // DRAFT → SENT
+        // ========================================
+
+        workflow.transition(
+          requestId,
+          "SENT",
+          10,
+          "Lab test request sent to MOLIS",
+          "ORCHESTRATOR"
         );
-    updateRequestStatus(
-        requestId,
-        "RESULT_MAPPED",
-        90,
-        "FHIR result mapped to canonical result"
-    );
-    
-    // ==========================================
-    // STEP 5
-    // Canonical Result → FHIR Document
-    // ==========================================
 
-    const documentResponse =
-    await orchestrator
-        .buildFhirDocument(
-        canonicalResultResponse.result
-        );
-    
-    updateRequestStatus(
-      requestId,
-      "FHIR_DOCUMENT_CREATED",
-      95,
-      "FHIR pathology document created"
-    );
-    
-    
-    // ==========================================
-    // STEP 6
-    // Validate final FHIR document
-    // ==========================================
 
-    const documentValidation =
-    orchestrator
-        .validateFhirDocument(
-        documentResponse.document
-        );
-    
-    updateRequestStatus(
-        requestId,
-        "COMPLETED",
-        100,
-        "Laboratory request completed"
-    );
+        return reply
+          .code(201)
+          .send({
 
-    return reply
-    .code(200)
-    .send({
+            status:
+              "SENT",
 
-        status:
-        "COMPLETED",
+            protocol,
 
-        requestId:
-        request.body.requestId,
+            requestId,
 
-        accessionNumber,
+            accessionNumber,
 
-        canonicalRequest,
+            workflow:
+              workflow.getStatus(
+                requestId
+              ),
 
-        fhirRequest:
-        fhirResponse.fhir,
+            canonicalRequest,
 
-        molis:
-        fhirResponse.molis,
+            fhirRequest:
+              fhirResponse.fhir,
 
-        molisProcess:
-        molisProcessResponse,
+            molis:
+              fhirResponse.molis
 
-        fhirResult:
-        molisFhirResult,
+          });
 
-        canonicalResult:
-        canonicalResultResponse.result,
+      }
 
-        fhirDocument:
-        documentResponse.document,
 
-        validation:
-        documentValidation
+      throw new Error(
+        `Unsupported protocol: ${protocol}`
+      );
 
-    });
 
     } catch (error) {
 
@@ -490,16 +1610,21 @@ app.post<{
         error
       );
 
-      const errorMessage =
+
+      const message =
         error instanceof Error
           ? error.message
-          : "Unknown error";
+          : "Unknown orchestration error";
 
-      updateRequestStatus(
-        request.body.requestId,
-        "FAILED",
-        0,
-        errorMessage
+
+      /*
+       * Technical failures do NOT invent
+       * an RLT lifecycle state.
+       */
+
+      recordRequestError(
+        requestId,
+        message
       );
 
 
@@ -510,10 +1635,14 @@ app.post<{
           status:
             "ORCHESTRATION_ERROR",
 
-          message:
-            error instanceof Error
-              ? error.message
-              : "Unknown error"
+          requestId,
+
+          message,
+
+          workflow:
+            workflow.getStatus(
+              requestId
+            )
 
         });
 
@@ -522,6 +1651,383 @@ app.post<{
   }
 );
 
+function getNextDemoLimsEvent(
+  state: RltState
+): LimsEvent | undefined {
+
+  switch (state) {
+
+    case "COLLECTED":
+      return {
+        eventType:
+          "SPECIMEN_RECEIVED",
+
+        message:
+          "Specimen received by laboratory"
+      };
+
+
+    case "RECEIVED":
+      return {
+        eventType:
+          "BOOKED_IN",
+
+        message:
+          "Specimen booked into LIMS"
+      };
+
+
+    case "BOOKED_IN":
+      return {
+        eventType:
+          "TEST_STARTED",
+
+        message:
+          "Laboratory testing started"
+      };
+
+
+    case "IN_PROGRESS":
+      return {
+        eventType:
+          "RESULT_RECEIVED",
+
+        message:
+          "Laboratory result received"
+      };
+
+
+    case "RESULT_RECEIVED":
+      return {
+        eventType:
+          "RESULT_SAVED",
+
+        message:
+          "Laboratory result saved in LIMS"
+      };
+
+
+    case "RESULT_SAVED":
+      return {
+        eventType:
+          "RESULT_NOTIFIED",
+
+        message:
+          "LIMS notified RLT that result is available"
+      };
+
+
+    default:
+      return undefined;
+  }
+}
+
+// ==================================================
+// DEMO ONLY — ADVANCE LIMS WORKFLOW
+//
+// This endpoint simulates an external LIMS event.
+//
+// IMPORTANT:
+// This is POC/demo infrastructure only.
+// Production RLT must receive genuine LIMS events.
+// ==================================================
+
+app.post<{
+  Params: {
+    requestId: string;
+  };
+}>(
+  "/demo/lab-requests/:requestId/advance-lims",
+  async (
+    request,
+    reply
+  ) => {
+
+    const {
+      requestId
+    } =
+      request.params;
+
+
+    try {
+
+      const context =
+        getRequestContext(
+          requestId
+        );
+
+
+      const status =
+        workflow.getStatus(
+          requestId
+        );
+
+
+      if (
+        !context ||
+        !status
+      ) {
+
+        return reply
+          .code(404)
+          .send({
+
+            status:
+              "REQUEST_NOT_FOUND",
+
+            message:
+              `Request ${requestId} not found`
+
+          });
+
+      }
+
+
+      const event =
+        getNextDemoLimsEvent(
+          status.state
+        );
+
+
+      if (!event) {
+
+        return reply
+          .code(409)
+          .send({
+
+            status:
+              "DEMO_TRANSITION_NOT_AVAILABLE",
+
+            requestId,
+
+            currentState:
+              status.state,
+
+            message:
+              `No simulated LIMS event is available from ${status.state}`
+
+          });
+
+      }
+
+
+      const demoEvent:
+        LimsEvent = {
+
+          ...event,
+
+          accessionNumber:
+            context.accessionNumber,
+
+          timestamp:
+            new Date()
+              .toISOString()
+
+        };
+
+
+      // ==========================================
+      // SPECIAL CASE
+      //
+      // Fake MOLIS must generate its fake result
+      // before RLT tries to retrieve ORU/FHIR.
+      //
+      // This call exists ONLY in the demo harness.
+      // ==========================================
+
+      if (
+        event.eventType ===
+        "RESULT_RECEIVED"
+      ) {
+
+        if (
+          !context.accessionNumber
+        ) {
+
+          throw new Error(
+            "Cannot simulate result: accession number missing"
+          );
+
+        }
+
+
+        const fakeMolisUrl =
+          process.env.FAKE_MOLIS_URL
+          ??
+          "http://localhost:4010";
+
+
+        const molisProcessResponse =
+          await fetch(
+            `${fakeMolisUrl}/molis/orders/${context.accessionNumber}/process`,
+            {
+              method:
+                "POST"
+            }
+          );
+
+
+        if (
+          !molisProcessResponse.ok
+        ) {
+
+          const body =
+            await molisProcessResponse
+              .text();
+
+
+          throw new Error(
+            `Fake MOLIS processing failed: ` +
+            `${molisProcessResponse.status} ${body}`
+          );
+
+        }
+
+      }
+
+
+      // ==========================================
+      // STORE DEMO EVENT
+      // ==========================================
+
+      addLimsEvent(
+        requestId,
+        demoEvent
+      );
+
+
+      // ==========================================
+      // RESULT_RECEIVED NEEDS REAL RESULT PIPELINE
+      // ==========================================
+
+      if (
+        demoEvent.eventType ===
+        "RESULT_RECEIVED"
+      ) {
+
+        const updatedContext =
+          await processReceivedResult(
+            orchestrator,
+            context
+          );
+
+
+        const updatedStatus =
+          workflow.transition(
+            requestId,
+            "RESULT_RECEIVED",
+            70,
+            demoEvent.message
+            ??
+            "Laboratory result received",
+            "MOLIS"
+          );
+
+
+        return reply.send({
+
+          status:
+            "DEMO_EVENT_ACCEPTED",
+
+          requestId,
+
+          simulatedEvent:
+            demoEvent,
+
+          workflow:
+            updatedStatus,
+
+          result: {
+            canonicalResult:
+              updatedContext.canonicalResult,
+
+            fhirDocument:
+              updatedContext.fhirDocument
+          }
+
+        });
+
+      }
+
+
+      // ==========================================
+      // NORMAL EVENT
+      // ==========================================
+
+      const nextState =
+        mapLimsEventToRltState(
+          demoEvent.eventType
+        );
+
+
+      const progress =
+        getProgressForState(
+          nextState
+        );
+
+
+      const updatedStatus =
+        workflow.transition(
+          requestId,
+          nextState,
+          progress,
+          demoEvent.message
+          ??
+          buildLimsEventMessage(
+            demoEvent.eventType
+          ),
+          "MOLIS"
+        );
+
+
+      return reply.send({
+
+        status:
+          "DEMO_EVENT_ACCEPTED",
+
+        requestId,
+
+        simulatedEvent:
+          demoEvent,
+
+        workflow:
+          updatedStatus
+
+      });
+
+
+    } catch (error) {
+
+      request.log.error(
+        error
+      );
+
+
+      return reply
+        .code(409)
+        .send({
+
+          status:
+            "DEMO_EVENT_REJECTED",
+
+          requestId,
+
+          message:
+            error instanceof Error
+              ? error.message
+              : "Unable to simulate LIMS event",
+
+          workflow:
+            workflow.getStatus(
+              requestId
+            )
+
+        });
+
+    }
+
+  }
+);
 
 try {
 

@@ -1,7 +1,6 @@
-export type IntegrationProtocol =
-  | "FHIR_R4"
-  | "HL7_V2";
-
+// ==================================================
+// AUTHORITATIVE RLT WORKFLOW STATES
+// ==================================================
 
 export type RltState =
   | "DRAFT"
@@ -18,6 +17,6 @@ export type RltState =
   | "COMPLETED"
   | "LIMS_UPDATED"
 
-  // unhappy paths
+  // Unhappy paths
   | "INVALID_SAMPLE"
   | "SAMPLE_NOT_FOUND";
