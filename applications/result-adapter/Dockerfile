@@ -1,25 +1,18 @@
-FROM node:22-alpine AS build
+FROM node:24-alpine
 
 WORKDIR /app
 
+# Java is required by validator_cli.jar
+RUN apk add --no-cache \
+    openjdk21-jre \
+    ca-certificates
+
 COPY package*.json ./
+
 RUN npm install
 
-COPY tsconfig.json ./
-COPY src ./src
+COPY . .
 
 RUN npm run build
 
-FROM node:22-alpine AS runtime
-
-WORKDIR /app
-ENV NODE_ENV=production
-
-COPY package*.json ./
-RUN npm install --omit=dev
-
-COPY --from=build /app/dist ./dist
-
-EXPOSE 4000
-
-CMD ["node", "dist/server.js"]
+CMD ["npm", "start"]

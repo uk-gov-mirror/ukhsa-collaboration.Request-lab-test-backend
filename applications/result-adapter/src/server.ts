@@ -17,6 +17,14 @@ import {
   validateFhirBundle
 } from "./validator.js";
 
+import {
+  FhirBundle
+} from './mapper.js';
+
+import {
+  CanonicalLabResult
+} from './types.js';
+
 const app =
   Fastify({
     logger: true
@@ -62,14 +70,11 @@ app.post<{
 
     try {
 
-      const bundle =
-        request.body;
+      const bundle = request.body as FhirBundle;
 
 
       const result =
-        mapFhirResultToCanonical(
-          bundle
-        );
+        mapFhirResultToCanonical(bundle);
 
 
       return reply
@@ -151,7 +156,7 @@ app.post<{
 
       const bundle =
         buildFhirResultBundle(
-          canonicalResult
+          canonicalResult as CanonicalLabResult
         );
 
 
@@ -229,7 +234,7 @@ app.post<{
 
       const bundle =
         buildPathologyDocument(
-          canonicalResult
+          canonicalResult as CanonicalLabResult
         );
 
 
@@ -273,7 +278,7 @@ app.post<{ Body: any }>(
 
     try {
 
-      const bundle = request.body;
+      const bundle = request.body as FhirBundle;
 
       if (!bundle) {
 
@@ -287,11 +292,7 @@ app.post<{ Body: any }>(
 
       }
 
-      if (
-        bundle.resourceType !==
-        "Bundle"
-      ) {
-
+      if (bundle.resourceType !== "Bundle") {
         return reply
           .code(400)
           .send({

@@ -1,24 +1,37 @@
-FROM node:22-alpine AS build
+# ==================================================
+# BUILD STAGE
+# ==================================================
+
+FROM node:24-alpine AS build
 
 WORKDIR /app
 
 COPY package*.json ./
+
 RUN npm install
 
-COPY tsconfig.json vite.config.ts index.html ./
-COPY src ./src
+COPY . .
 
-# Browser-side URL. The compose file passes this as a build argument.
-ARG VITE_ORCHESTRATOR_URL=http://localhost:4005
+ARG VITE_ORCHESTRATOR_URL=/orchestrator
+
 ENV VITE_ORCHESTRATOR_URL=$VITE_ORCHESTRATOR_URL
 
 RUN npm run build
 
-FROM nginx:1.29-alpine
 
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY docker/rlt-web/nginx.conf /etc/nginx/conf.d/default.conf
+# ==================================================
+# NGINX STAGE
+# ==================================================
+
+FROM nginx:alpine
+
+COPY nginx.conf \
+  /etc/nginx/conf.d/default.conf
+
+COPY --from=build \
+  /app/dist \
+  /usr/share/nginx/html
 
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD [ "nginx", "-g", "daemon off;"]

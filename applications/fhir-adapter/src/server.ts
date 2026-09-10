@@ -97,9 +97,13 @@ app.post<{
       console.log("==============================");
       console.log(JSON.stringify(bundle, null, 2));
 
+      const MOLIS_URL =
+        process.env.MOLIS_URL ??
+        "http://localhost:4010";
+
       const molisResponse =
         await fetch(
-            "http://localhost:4010/molis/orders",
+            `${MOLIS_URL}/molis/orders`,
             {
             method: "POST",
 

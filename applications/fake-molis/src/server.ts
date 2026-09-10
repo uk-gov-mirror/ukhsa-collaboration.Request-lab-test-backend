@@ -73,7 +73,7 @@ app.post<{
   ) => {
 
     const bundle =
-      request.body;
+      request.body as any;
 
 
     // ----------------------------------------------

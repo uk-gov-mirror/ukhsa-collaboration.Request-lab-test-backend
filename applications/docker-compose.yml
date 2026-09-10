@@ -1,162 +1,223 @@
 services:
 
-  # --------------------------------------------------
-  # RLT Web
-  # --------------------------------------------------
-  rlt-web:
-    build:
-      context: ./rlt-web
-      dockerfile: ../rlt-web/Dockerfile
-      args:
-        VITE_ORCHESTRATOR_URL: http://localhost:4005
-    container_name: rlt-web
-    ports:
-      - "5173:80"
-    depends_on:
-      pathology-orchestrator:
-        condition: service_healthy
-    restart: unless-stopped
+  # ==================================================
+  # RLT API
+  # ==================================================
+  # api:
+  #   build:
+  #     context: ./api
+  #   container_name: rlt-api
+  #   environment:
+  #     TERMINOLOGY_URL: http://terminology:4001
+  #   ports:
+  #     - "4000:4000"
+  #   depends_on:
+  #     terminology:
+  #       condition: service_healthy
+  #   networks:
+  #     - rlt-network
+  #   restart: unless-stopped
 
-  # --------------------------------------------------
-  # RLT Orchestrator
-  # --------------------------------------------------
-  pathology-orchestrator:
-    build:
-      context: ./pathology-orchestrator
-      dockerfile: ../pathology-orchestrator/Dockerfile
-    container_name: pathology-orchestrator
-    environment:
-      PORT: "4005"
-      TERMINOLOGY_URL: http://terminology:4001
-      FHIR_ADAPTER_URL: http://fhir-adapter:4002
-      MOLIS_URL: http://fake-molis:4010
-      RESULT_ADAPTER_URL: http://result-adapter:4003
-    ports:
-      - "4005:4005"
-    depends_on:
-      terminology:
-        condition: service_healthy
-      fhir-adapter:
-        condition: service_healthy
-      fake-molis:
-        condition: service_healthy
-      result-adapter:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:4005/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-    restart: unless-stopped
+  # ==================================================
+  # TERMINOLOGY SERVICE
+  # ==================================================
 
-  # --------------------------------------------------
-  # Terminology
-  # --------------------------------------------------
   terminology:
     build:
       context: ./terminology
-      dockerfile: ../terminology/Dockerfile
     container_name: rlt-terminology
-    environment:
-      PORT: "4001"
     ports:
       - "4001:4001"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:4001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 5s
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:4001/health"
+        ]
+      interval: 5s
+      timeout: 3s
       retries: 10
-      start_period: 10s
+      start_period: 5s
+    networks:
+      - rlt-network
     restart: unless-stopped
 
-  # --------------------------------------------------
-  # FHIR Adapter
-  # --------------------------------------------------
+
+  # ==================================================
+  # FAKE MOLIS
+  # ==================================================
+  fake-molis:
+    build:
+      context: ./fake-molis
+    container_name: rlt-fake-molis
+    ports:
+      - "4010:4010"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:4010/health"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - rlt-network
+    restart: unless-stopped
+
+  # ==================================================
+  # FHIR ADAPTER
+  # ==================================================
+
   fhir-adapter:
     build:
       context: ./fhir-adapter
-      dockerfile: ../fhir-adapter/Dockerfile
     container_name: rlt-fhir-adapter
     environment:
-      PORT: "4002"
       MOLIS_URL: http://fake-molis:4010
     ports:
       - "4002:4002"
     depends_on:
-      fake-molis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:4002/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
+      - fake-molis
+    networks:
+      - rlt-network
     restart: unless-stopped
 
-  # --------------------------------------------------
-  # Fake MOLIS
-  # --------------------------------------------------
-  fake-molis:
+
+  # ==================================================
+  # HL7 V2 ADAPTER
+  # ==================================================
+  hl7v2-adapter:
     build:
-      context: ./fake-molis
-      dockerfile: ../fake-molis/Dockerfile
-    container_name: rlt-fake-molis
-    environment:
-      PORT: "4010"
+      context: ./hl7v2-adapter
+    container_name: rlt-hl7v2-adapter
     ports:
-      - "4010:4010"
+      - "4006:4006"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:4010/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 5s
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:4006/health"
+        ]
+      interval: 5s
+      timeout: 3s
       retries: 10
-      start_period: 10s
+      start_period: 5s
+    networks:
+      - rlt-network
     restart: unless-stopped
 
-  # --------------------------------------------------
-  # Result Adapter
-  # --------------------------------------------------
+
+  # ==================================================
+  # RESULT ADAPTER
+  # ==================================================
+
   result-adapter:
     build:
       context: ./result-adapter
-      dockerfile: ../result-adapter/Dockerfile
     container_name: rlt-result-adapter
     environment:
-      PORT: "4003"
+      FHIR_VALIDATOR_JAR:
+        /tools/fhir-validator/validator_cli.jar
+      PATHOLOGY_FHIR_IG:
+        fhir.r4.nhsengland.pathology#0.3.1-alpha
+    volumes:
+      - ./tools/fhir-validator:/tools/fhir-validator:ro
     ports:
       - "4003:4003"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:4003/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 5s
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "--spider",
+          "http://localhost:4003/health"
+        ]
+      interval: 5s
+      timeout: 3s
       retries: 10
-      start_period: 10s
+      start_period: 5s
+    networks:
+      - rlt-network
     restart: unless-stopped
 
-  # --------------------------------------------------
-  # Legacy / low-level RLT API
-  #
-  # This is included because it exists in the original POC.
-  # The orchestrator is the preferred application entry point.
-  # --------------------------------------------------
-  api:
+
+  # ==================================================
+  # PATHOLOGY ORCHESTRATOR
+  # ==================================================
+
+  pathology-orchestrator:
     build:
-      context: ./api
-      dockerfile: ../api/Dockerfile
-    container_name: rlt-api
+      context: ./pathology-orchestrator
+    container_name: rlt-pathology-orchestrator
     environment:
-      PORT: "4000"
-      TERMINOLOGY_URL: http://terminology:4001
+      PORT: 4005
+      TERMINOLOGY_URL:
+        http://terminology:4001
+      FHIR_ADAPTER_URL:
+        http://fhir-adapter:4002
+      HL7V2_ADAPTER_URL:
+        http://hl7v2-adapter:4006
+      MOLIS_URL:
+        http://fake-molis:4010
+      RESULT_ADAPTER_URL:
+        http://result-adapter:4003
+      # Used by your POC LIMS simulator if you
+      # kept the FAKE_MOLIS_URL implementation.
+      FAKE_MOLIS_URL:
+        http://fake-molis:4010
+      ENABLE_DEMO_LIMS_SIMULATOR:
+        "true"
     ports:
-      - "4000:4000"
+      - "4005:4005"
     depends_on:
-      terminology:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
+      - terminology
+      - fhir-adapter
+      - hl7v2-adapter
+      - fake-molis
+      - result-adapter
+    networks:
+      - rlt-network
     restart: unless-stopped
+
+  # ==================================================
+  # RLT WEB
+  # ==================================================
+
+  rlt-web:
+    build:
+      context:
+        ./rlt-web
+      args:
+        VITE_ORCHESTRATOR_URL:
+          /orchestrator
+    container_name:
+      rlt-web
+    ports:
+      - "8080:80"
+    depends_on:
+      - pathology-orchestrator
+    networks:
+      - rlt-network
+    restart:
+      unless-stopped
+
+# ==================================================
+# NETWORK
+# ==================================================
+
+networks:
+  rlt-network:
+    driver:
+      bridge

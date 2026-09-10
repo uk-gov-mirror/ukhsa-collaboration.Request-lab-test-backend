@@ -3,7 +3,7 @@ import type {
 } from "./types.js";
 
 
-interface FhirBundle {
+export interface FhirBundle {
   resourceType: "Bundle";
 
   type: string;
