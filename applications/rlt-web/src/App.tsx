@@ -17,6 +17,9 @@ import type {
   RltState,
 } from "./types";
 
+import Gs1Barcode
+  from "./components/Gs1Barcode";
+
 
 // ==================================================
 // CONFIG
@@ -151,6 +154,14 @@ interface OrchestrationResponse {
   status: string;
   protocol?: IntegrationProtocol;
   requestId: string;
+  specimen?: {
+    specimenId: string;
+    barcode: {
+      symbology: "GS1-128";
+      payload: string;
+      humanReadable: string;
+    };
+  }
   accessionNumber?: string;
   workflow?: RequestStatus;
   // ------------------------------------------------
@@ -502,6 +513,13 @@ function App() {
         requestStatus.state
       )
     : undefined;
+  
+  const [
+    specimenInfo,
+    setSpecimenInfo
+  ] = useState<
+    OrchestrationResponse["specimen"] | null
+  >(null);
 
 
   // ==================================================
@@ -1172,24 +1190,16 @@ function App() {
         await fetch(
           `${ORCHESTRATOR_URL}/lab-requests`,
           {
-
             method:
               "POST",
-
-
             headers: {
-
               "Content-Type":
                 "application/json",
-
             },
-
-
             body:
               JSON.stringify(
                 labRequest
               ),
-
           }
         );
 
@@ -1222,6 +1232,9 @@ function App() {
         data
       );
 
+      setSpecimenInfo(
+        data.specimen ?? null
+      );
 
       // ==============================================
       // GET AUTHORITATIVE STATE
@@ -1285,22 +1298,18 @@ function App() {
 
   async function labelSpecimen() {
 
-    if (!requestId) {
-
+    if (
+      !requestId ||
+      !specimenInfo
+    ) {
       return;
-
     }
-
-
     setError(
       null
     );
-
-
     setActionLoading(
       true
     );
-
 
     try {
 
@@ -1325,7 +1334,7 @@ function App() {
               JSON.stringify({
 
                 labelId:
-                  `SPEC-${requestId}`
+                  specimenInfo?.specimenId
 
               }),
 
@@ -1850,6 +1859,10 @@ function App() {
       );
 
     }
+  }
+
+  function printSpecimenLabel() {
+    window.print();
   }
 
   // ==================================================
@@ -2579,7 +2592,122 @@ function App() {
               </div>
 
             )}
+            {requestStatus.state !== "DRAFT" &&
+              specimenInfo && (
+                <div className="specimen-summary">
 
+                  <span>
+                    Specimen
+                  </span>
+
+                  <strong>
+                    {specimenInfo.specimenId}
+                  </strong>
+
+                </div>
+            )}
+            {requestStatus.state === "SENT" &&
+            specimenInfo && (
+              <section
+                className="specimen-label-card"
+                id="specimen-label"
+              >
+                <div className="specimen-label-heading">
+                  <div>
+                    <div className="eyebrow">
+                      SPECIMEN LABEL
+                    </div>
+                    <h2>
+                      Print specimen label
+                    </h2>
+                    <p>
+                      Print this label and attach it
+                      to the specimen before confirming
+                      that the specimen has been labelled.
+                    </p>
+                  </div>
+                </div>
+                <div className="printable-specimen-label">
+                  <div className="label-title">
+                    Request Lab Test
+                  </div>
+                  <div className="label-detail-grid">
+                    <div>
+                      <span>
+                        Patient
+                      </span>
+                      <strong>
+                        {form.firstName} {form.lastName}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>
+                        Date of birth
+                      </span>
+                      <strong>
+                        {form.dateOfBirth}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>
+                        Request ID
+                      </span>
+                      <strong>
+                        {requestId}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>
+                        Specimen ID
+                      </span>
+                      <strong>
+                        {specimenInfo.specimenId}
+                      </strong>
+                    </div>
+                    <div>
+                      <span>
+                        Test
+                      </span>
+                      <strong>
+                        Haemoglobin A1c
+                      </strong>
+                    </div>
+                    <div>
+                      <span>
+                        Specimen type
+                      </span>
+                      <strong>
+                        {form.specimen}
+                      </strong>
+                    </div>
+                  </div>
+                  <div className="barcode-area">
+                    <Gs1Barcode
+                      value={
+                        specimenInfo.barcode.payload
+                      }
+                    />
+                    <div className="barcode-human-readable">
+                      {
+                        specimenInfo.barcode
+                          .humanReadable
+                      }
+                    </div>
+                  </div>
+                </div>
+                <div className="specimen-label-actions no-print">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={
+                    printSpecimenLabel
+                  }
+                >
+                  Print specimen label
+                </button>
+              </div>
+              </section>
+          )}
 
             {/* ============================================= */}
             {/* ACTIONS */}
@@ -2604,7 +2732,7 @@ function App() {
 
                   {actionLoading
                     ? "Updating..."
-                    : "Label specimen"}
+                    : "Confirm specimen labelled"}
 
                 </button>
 

@@ -1435,3 +1435,165 @@ form {
 
   letter-spacing: 0.04em;
 }
+
+
+.specimen-label-card {
+  margin-top: 24px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 24px;
+  border: 1px solid #d8dde0;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.printable-specimen-label {
+  width: 100%;
+  max-width: 620px;
+  box-sizing: border-box;
+  padding: 24px;
+  border: 2px solid #212b32;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.label-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(
+    2,
+    minmax(0, 1fr)
+  );
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.label-detail-grid > div {
+  min-width: 0;
+}
+
+.label-detail-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.barcode-area {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding-top: 20px;
+  border-top: 1px solid #d8dde0;
+  overflow: hidden;
+  text-align: center;
+}
+
+.barcode-area canvas {
+  display: block;
+
+  width: 100% !important;
+  max-width: 100% !important;
+
+  height: auto !important;
+
+  margin: 0 auto;
+
+  object-fit: contain;
+}
+
+.barcode-human-readable {
+  width: 100%;
+  max-width: 100%;
+  margin-top: 12px;
+
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+
+  font-size: 12px;
+  line-height: 1.5;
+
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.specimen-label-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+@media (max-width: 640px) {
+
+  .specimen-label-card {
+    padding: 16px;
+  }
+
+  .printable-specimen-label {
+    padding: 16px;
+  }
+
+  .label-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .barcode-area {
+    overflow-x: auto;
+  }
+
+  .barcode-area canvas {
+    min-width: 0;
+  }
+}
+
+@media print {
+
+  body * {
+    visibility: hidden;
+  }
+
+  .specimen-label-card,
+  .specimen-label-card * {
+    visibility: visible;
+  }
+
+  .specimen-label-card {
+    position: absolute;
+    left: 0;
+    top: 0;
+
+    width: 100mm;
+    max-width: 100mm;
+
+    margin: 0;
+    padding: 0;
+
+    border: 0;
+  }
+
+  .printable-specimen-label {
+    width: 100mm;
+    max-width: 100mm;
+
+    padding: 5mm;
+
+    box-sizing: border-box;
+  }
+
+  .barcode-area canvas {
+    width: 100% !important;
+    height: auto !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+}

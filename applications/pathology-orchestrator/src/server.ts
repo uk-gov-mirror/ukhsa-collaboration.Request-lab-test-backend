@@ -47,6 +47,14 @@ import type {
   RltState
 } from './rlt-state.js';
 
+import {
+  generateSpecimenId
+} from "./specimen-id.js";
+
+import {
+  buildSpecimenBarcode
+} from "./barcode.js";
+
 const app =
   Fastify({
     logger: true
@@ -1345,6 +1353,23 @@ app.post<{
         protocol
       );
 
+      const specimenId =
+        generateSpecimenId();
+
+      const barcode =
+        buildSpecimenBarcode(
+          requestId,
+          specimenId
+        );    
+      updateRequestContext(
+        requestId,
+        {
+          specimenWorkflow: {
+            specimenId,
+            barcode
+          }
+        }
+      );
 
       // ==========================================
       // STEP 2
@@ -1474,6 +1499,11 @@ app.post<{
 
             requestId,
 
+            specimen: {
+              specimenId,
+              barcode
+            },
+
             accessionNumber,
 
             workflow:
@@ -1578,6 +1608,11 @@ app.post<{
             protocol,
 
             requestId,
+
+            specimen: {
+              specimenId,
+              barcode
+            },
 
             accessionNumber,
 

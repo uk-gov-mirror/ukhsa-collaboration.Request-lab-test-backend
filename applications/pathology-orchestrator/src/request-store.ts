@@ -16,6 +16,12 @@ export interface RltRequestContext {
   hl7Request?: string;
   specimenWorkflow?: {
     labelId?: string;
+    specimenId?: string;
+    barcode?: {
+      symbology: "GS1-128";
+      payload: string;
+      humanReadable: string;
+    };
     labelledAt?: string;
     collectedAt?: string;
     collectedBy?: string;
